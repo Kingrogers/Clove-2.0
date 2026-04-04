@@ -126,64 +126,6 @@
   color: #52525b;
 }
 
-/* ── Editor ── */
-.editor {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  background: #1a1a1e;
-  min-width: 0;
-}
-
-.editor-header {
-  padding: 24px 32px 0;
-}
-
-.editor-title {
-  width: 100%;
-  border: none;
-  background: transparent;
-  color: #f4f4f5;
-  font-size: 1.6rem;
-  font-weight: 600;
-  letter-spacing: -0.02em;
-  outline: none;
-}
-
-.editor-title::placeholder {
-  color: #3f3f46;
-}
-
-.editor-body {
-  flex: 1;
-  padding: 16px 32px 32px;
-  border: none;
-  background: transparent;
-  color: #d4d4d8;
-  font-size: 0.92rem;
-  line-height: 1.7;
-  resize: none;
-  outline: none;
-  font-family: inherit;
-}
-
-.editor-body::placeholder {
-  color: #3f3f46;
-}
-
-.editor-empty {
-  flex: 1;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.editor-empty p {
-  color: #3f3f46;
-  font-size: 0.9rem;
-}
-
-/* Note item bottom row */
 .note-item-bottom {
   display: flex;
   align-items: center;
@@ -209,4 +151,239 @@
 
 .note-delete-btn:hover {
   color: #ef4444;
+}
+
+/* ── Editor ── */
+.editor {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  background: #1a1a1e;
+  min-width: 0;
+}
+
+.editor-header {
+  padding: 24px 32px 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.editor-title {
+  width: 100%;
+  border: none;
+  background: transparent;
+  color: #f4f4f5;
+  font-size: 1.6rem;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  outline: none;
+}
+
+.editor-title::placeholder {
+  color: #3f3f46;
+}
+
+/* Toolbar */
+.editor-toolbar {
+  display: flex;
+  align-items: center;
+  padding-bottom: 4px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.mode-toggle {
+  display: flex;
+  background: rgba(255, 255, 255, 0.04);
+  border-radius: 6px;
+  padding: 2px;
+  gap: 1px;
+}
+
+.mode-btn {
+  padding: 4px 12px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: #71717a;
+  font-size: 0.78rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s;
+  font-family: inherit;
+}
+
+.mode-btn:hover {
+  color: #a1a1aa;
+}
+
+.mode-btn.active {
+  background: rgba(255, 255, 255, 0.08);
+  color: #e4e4e7;
+}
+
+/* Markdown textarea */
+.editor-body {
+  flex: 1;
+  padding: 16px 32px 32px;
+  border: none;
+  background: transparent;
+  color: #d4d4d8;
+  font-size: 0.92rem;
+  line-height: 1.7;
+  resize: none;
+  outline: none;
+  font-family: inherit;
+}
+
+.markdown-editor {
+  font-family: "SF Mono", "Fira Code", "Fira Mono", Menlo, Consolas, monospace;
+  font-size: 0.85rem;
+  line-height: 1.6;
+  color: #a1a1aa;
+  tab-size: 2;
+}
+
+.editor-body::placeholder {
+  color: #3f3f46;
+}
+
+/* ── Block Editor (TipTap) ── */
+.block-editor {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px 32px 32px;
+}
+
+.block-editor-content {
+  outline: none;
+  color: #d4d4d8;
+  font-size: 0.92rem;
+  line-height: 1.7;
+}
+
+.block-editor-content > * + * {
+  margin-top: 0.5em;
+}
+
+/* Headings */
+.block-editor-content h1 {
+  font-size: 1.5rem;
+  font-weight: 600;
+  color: #f4f4f5;
+  margin-top: 1.2em;
+  letter-spacing: -0.01em;
+}
+
+.block-editor-content h2 {
+  font-size: 1.25rem;
+  font-weight: 600;
+  color: #e4e4e7;
+  margin-top: 1em;
+}
+
+.block-editor-content h3 {
+  font-size: 1.05rem;
+  font-weight: 600;
+  color: #d4d4d8;
+  margin-top: 0.8em;
+}
+
+/* Paragraphs */
+.block-editor-content p {
+  min-height: 1.5em;
+}
+
+/* Inline formatting */
+.block-editor-content strong {
+  font-weight: 600;
+  color: #f4f4f5;
+}
+
+.block-editor-content em {
+  font-style: italic;
+}
+
+.block-editor-content code {
+  background: rgba(255, 255, 255, 0.06);
+  border-radius: 3px;
+  padding: 0.15em 0.35em;
+  font-family: "SF Mono", "Fira Code", Menlo, Consolas, monospace;
+  font-size: 0.88em;
+  color: #c084fc;
+}
+
+/* Code blocks */
+.block-editor-content pre {
+  background: rgba(0, 0, 0, 0.3);
+  border-radius: 6px;
+  padding: 12px 16px;
+  margin: 0.5em 0;
+  overflow-x: auto;
+}
+
+.block-editor-content pre code {
+  background: transparent;
+  padding: 0;
+  color: #d4d4d8;
+  font-size: 0.84rem;
+}
+
+/* Lists */
+.block-editor-content ul,
+.block-editor-content ol {
+  padding-left: 1.5em;
+}
+
+.block-editor-content li {
+  margin: 0.15em 0;
+}
+
+.block-editor-content li p {
+  margin: 0;
+}
+
+/* Blockquote */
+.block-editor-content blockquote {
+  border-left: 3px solid rgba(99, 102, 241, 0.4);
+  padding-left: 1em;
+  color: #a1a1aa;
+  margin: 0.5em 0;
+}
+
+/* Horizontal rule */
+.block-editor-content hr {
+  border: none;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  margin: 1em 0;
+}
+
+/* Placeholder */
+.block-editor-content p.is-editor-empty:first-child::before {
+  content: attr(data-placeholder);
+  float: left;
+  color: #3f3f46;
+  pointer-events: none;
+  height: 0;
+}
+
+.block-editor-content [data-placeholder]::before {
+  content: attr(data-placeholder);
+  float: left;
+  color: #3f3f46;
+  pointer-events: none;
+  height: 0;
+}
+
+/* Empty state */
+.editor-empty {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.editor-empty p {
+  color: #3f3f46;
+  font-size: 0.9rem;
 }
