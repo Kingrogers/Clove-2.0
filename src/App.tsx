@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import BlockEditor from "./BlockEditor";
 import ChatPanel from "./ChatPanel";
+import TasksView from "./TasksView";
 import "./App.css";
 
 interface Note {
@@ -26,6 +27,7 @@ function App() {
   const [activeId, setActiveId] = useState<string | null>(null);
   const [loaded, setLoaded] = useState(false);
   const [chatOpen, setChatOpen] = useState(false);
+  const [view, setView] = useState<"notes" | "tasks">("notes");
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
@@ -118,85 +120,112 @@ function App() {
       <aside className="sidebar">
         <div className="sidebar-header">
           <h1 className="logo">Clove</h1>
-          <button className="new-note-btn" onClick={createNote} title="New note">+</button>
+          {view === "notes" && (
+            <button className="new-note-btn" onClick={createNote} title="New note">+</button>
+          )}
         </div>
 
-        <div className="search-wrapper">
-          <input
-            type="text"
-            className="search"
-            placeholder="Search notes..."
-          />
+        <div className="view-switcher">
+          <button
+            className={`view-tab ${view === "notes" ? "active" : ""}`}
+            onClick={() => setView("notes")}
+          >
+            Notes
+          </button>
+          <button
+            className={`view-tab ${view === "tasks" ? "active" : ""}`}
+            onClick={() => setView("tasks")}
+          >
+            Tasks
+          </button>
         </div>
 
-        <nav className="notes-list">
-          {sorted.map((note) => (
-            <div
-              key={note.id}
-              className={`note-item ${note.id === activeId ? "active" : ""}`}
-              onClick={() => setActiveId(note.id)}
-            >
-              <span className="note-item-title">
-                {note.title || "Untitled"}
-              </span>
-              <div className="note-item-bottom">
-                <span className="note-item-meta">
-                  {formatTime(note.updatedAt)}
-                </span>
-                <button
-                  className="note-delete-btn"
-                  title="Delete note"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    deleteNote(note.id);
-                  }}
-                >
-                  &times;
-                </button>
-              </div>
-            </div>
-          ))}
-        </nav>
-      </aside>
-
-      <main className="editor">
-        {activeNote ? (
+        {view === "notes" && (
           <>
-            <div className="editor-header">
+            <div className="search-wrapper">
               <input
                 type="text"
-                className="editor-title"
-                placeholder="Untitled"
-                value={activeNote.title}
-                onChange={(e) => updateNote(activeNote.id, "title", e.target.value)}
+                className="search"
+                placeholder="Search notes..."
               />
-              <button
-                className={`ai-toggle ${chatOpen ? "active" : ""}`}
-                onClick={() => setChatOpen((o) => !o)}
-                title="Toggle AI assistant"
-              >
-                AI
-              </button>
             </div>
-            <BlockEditor
-              key={activeNote.id}
-              noteId={activeNote.id}
-              content={activeNote.body}
-              onChange={(md) => updateNote(activeNote.id, "body", md)}
-            />
-          </>
-        ) : (
-          <div className="editor-empty">
-            <p>Create a note to get started</p>
-          </div>
-        )}
-      </main>
 
-      {chatOpen && activeNote && (
-        <ChatPanel
-          noteTitle={activeNote.title}
-          noteBody={activeNote.body}
-        />
+            <nav className="notes-list">
+              {sorted.map((note) => (
+                <div
+                  key={note.id}
+                  className={`note-item ${note.id === activeId ? "active" : ""}`}
+                  onClick={() => setActiveId(note.id)}
+                >
+                  <span className="note-item-title">
+                    {note.title || "Untitled"}
+                  </span>
+                  <div className="note-item-bottom">
+                    <span className="note-item-meta">
+                      {formatTime(note.updatedAt)}
+                    </span>
+                    <button
+                      className="note-delete-btn"
+                      title="Delete note"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        deleteNote(note.id);
+                      }}
+                    >
+                      &times;
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </nav>
+          </>
+        )}
+      </aside>
+
+      {view === "notes" ? (
+        <>
+          <main className="editor">
+            {activeNote ? (
+              <>
+                <div className="editor-header">
+                  <input
+                    type="text"
+                    className="editor-title"
+                    placeholder="Untitled"
+                    value={activeNote.title}
+                    onChange={(e) => updateNote(activeNote.id, "title", e.target.value)}
+                  />
+                  <button
+                    className={`ai-toggle ${chatOpen ? "active" : ""}`}
+                    onClick={() => setChatOpen((o) => !o)}
+                    title="Toggle AI assistant"
+                  >
+                    AI
+                  </button>
+                </div>
+                <BlockEditor
+                  key={activeNote.id}
+                  noteId={activeNote.id}
+                  content={activeNote.body}
+                  onChange={(md) => updateNote(activeNote.id, "body", md)}
+                />
+              </>
+            ) : (
+              <div className="editor-empty">
+                <p>Create a note to get started</p>
+              </div>
+            )}
+          </main>
+
+          {chatOpen && activeNote && (
+            <ChatPanel
+              noteTitle={activeNote.title}
+              noteBody={activeNote.body}
+            />
+          )}
+        </>
+      ) : (
+        <TasksView />
       )}
     </div>
   );

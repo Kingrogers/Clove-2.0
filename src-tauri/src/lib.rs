@@ -74,6 +74,71 @@ fn delete_note(id: String) -> Result<(), String> {
     Ok(())
 }
 
+// ── Tasks ──
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct Task {
+    pub id: String,
+    pub title: String,
+    pub done: bool,
+    #[serde(rename = "createdAt")]
+    pub created_at: u64,
+}
+
+fn tasks_dir() -> PathBuf {
+    let home = dirs::home_dir().expect("could not resolve home directory");
+    home.join("Documents").join("Clove").join("tasks")
+}
+
+fn ensure_tasks_dir() {
+    let dir = tasks_dir();
+    if !dir.exists() {
+        fs::create_dir_all(&dir).expect("failed to create Clove tasks directory");
+    }
+}
+
+#[tauri::command]
+fn list_tasks() -> Result<Vec<Task>, String> {
+    ensure_tasks_dir();
+    let dir = tasks_dir();
+    let mut tasks: Vec<Task> = Vec::new();
+
+    let entries = fs::read_dir(&dir).map_err(|e| e.to_string())?;
+    for entry in entries {
+        let entry = entry.map_err(|e| e.to_string())?;
+        let path = entry.path();
+        if path.extension().and_then(|s| s.to_str()) == Some("json") {
+            let data = fs::read_to_string(&path).map_err(|e| e.to_string())?;
+            match serde_json::from_str::<Task>(&data) {
+                Ok(task) => tasks.push(task),
+                Err(_) => continue,
+            }
+        }
+    }
+
+    // Incomplete first (newest first), then completed (newest first)
+    tasks.sort_by(|a, b| a.done.cmp(&b.done).then(b.created_at.cmp(&a.created_at)));
+    Ok(tasks)
+}
+
+#[tauri::command]
+fn save_task(task: Task) -> Result<(), String> {
+    ensure_tasks_dir();
+    let path = tasks_dir().join(format!("{}.json", task.id));
+    let data = serde_json::to_string_pretty(&task).map_err(|e| e.to_string())?;
+    fs::write(&path, data).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
+fn delete_task(id: String) -> Result<(), String> {
+    let path = tasks_dir().join(format!("{}.json", id));
+    if path.exists() {
+        fs::remove_file(&path).map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
 // ── Claude AI Chat ──
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -320,6 +385,9 @@ pub fn run() {
             list_notes,
             save_note,
             delete_note,
+            list_tasks,
+            save_task,
+            delete_task,
             chat_with_claude,
             get_api_key,
             save_api_key,
