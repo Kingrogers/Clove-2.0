@@ -269,7 +269,9 @@ function App() {
                   noteId={activeNote.id}
                   content={activeNote.body}
                   contentVersion={contentVersion}
+                  notes={notes}
                   onChange={(md) => updateNote(activeNote.id, "body", md)}
+                  onNoteLinkClick={(id) => setActiveId(id)}
                 />
               </>
             ) : (

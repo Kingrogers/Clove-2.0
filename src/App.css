@@ -1340,3 +1340,73 @@
   color: #71717a;
   font-size: 1rem;
 }
+
+/* ── Note links ── */
+.note-link {
+  display: inline;
+  color: #a5b4fc;
+  background: rgba(99, 102, 241, 0.08);
+  border: 1px solid rgba(99, 102, 241, 0.18);
+  border-radius: 4px;
+  padding: 0 5px;
+  font-size: 0.95em;
+  cursor: pointer;
+  text-decoration: none;
+  transition: background 0.12s, border-color 0.12s, color 0.12s;
+}
+
+.note-link:hover {
+  background: rgba(99, 102, 241, 0.18);
+  border-color: rgba(99, 102, 241, 0.35);
+  color: #c7d2fe;
+}
+
+.note-link::before {
+  content: "↗ ";
+  opacity: 0.6;
+  font-size: 0.85em;
+}
+
+.note-link-preview {
+  position: absolute;
+  z-index: 50;
+  max-width: 320px;
+  padding: 10px 12px;
+  background: #1c1c20;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 8px;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.5);
+  pointer-events: none;
+  animation: previewIn 0.12s ease-out;
+}
+
+@keyframes previewIn {
+  from { opacity: 0; transform: translateY(-4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.note-link-preview-title {
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: #e4e4e7;
+  margin-bottom: 4px;
+}
+
+.note-link-preview-snippet {
+  font-size: 0.78rem;
+  color: #a1a1aa;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 4;
+  -webkit-box-orient: vertical;
+}
+
+.note-link-menu .slash-menu-header {
+  padding: 8px 12px 4px;
+  font-size: 0.7rem;
+  color: #71717a;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
