@@ -1187,6 +1187,24 @@
   color: #ef4444;
 }
 
+.task-source-badge {
+  font-size: 0.7rem;
+  color: #a5b4fc;
+  background: rgba(99, 102, 241, 0.1);
+  border: 1px solid rgba(99, 102, 241, 0.2);
+  border-radius: 4px;
+  padding: 2px 6px;
+  max-width: 140px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.task-item.done .task-source-badge {
+  opacity: 0.5;
+}
+
 /* ── ⌘K AI Prompt Bar ── */
 .ai-prompt-floating {
   position: fixed;
