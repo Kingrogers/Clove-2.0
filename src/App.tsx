@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import BlockEditor from "./BlockEditor";
+import ChatPanel from "./ChatPanel";
 import "./App.css";
 
 interface Note {
@@ -24,13 +25,12 @@ function App() {
   const [notes, setNotes] = useState<Note[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [loaded, setLoaded] = useState(false);
+  const [chatOpen, setChatOpen] = useState(false);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Load notes from disk on mount
   useEffect(() => {
     invoke<Note[]>("list_notes").then((diskNotes) => {
       if (diskNotes.length === 0) {
-        // Create a welcome note
         const welcome: Note = {
           id: crypto.randomUUID(),
           title: "Welcome to Clove",
@@ -50,7 +50,6 @@ function App() {
     });
   }, []);
 
-  // Debounced save to disk
   const saveToDisk = useCallback((note: Note) => {
     if (saveTimer.current) clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(() => {
@@ -171,6 +170,13 @@ function App() {
                 value={activeNote.title}
                 onChange={(e) => updateNote(activeNote.id, "title", e.target.value)}
               />
+              <button
+                className={`ai-toggle ${chatOpen ? "active" : ""}`}
+                onClick={() => setChatOpen((o) => !o)}
+                title="Toggle AI assistant"
+              >
+                AI
+              </button>
             </div>
             <BlockEditor
               key={activeNote.id}
@@ -185,6 +191,13 @@ function App() {
           </div>
         )}
       </main>
+
+      {chatOpen && activeNote && (
+        <ChatPanel
+          noteTitle={activeNote.title}
+          noteBody={activeNote.body}
+        />
+      )}
     </div>
   );
 }
