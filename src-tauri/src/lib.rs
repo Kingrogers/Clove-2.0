@@ -378,6 +378,107 @@ fn launch_claude_code() -> Result<(), String> {
     Err("Claude app not found. Opening Terminal — run 'claude' manually.".to_string())
 }
 
+// ── AI Edit (⌘K) ──
+
+fn clean_ai_response(s: String) -> String {
+    let trimmed = s.trim();
+    if trimmed.starts_with("```") {
+        let lines: Vec<&str> = trimmed.lines().collect();
+        if lines.len() > 2 && lines.last().map(|l| l.trim()).unwrap_or("") == "```" {
+            return lines[1..lines.len() - 1].join("\n");
+        }
+    }
+    trimmed.to_string()
+}
+
+#[tauri::command]
+async fn ai_edit_note(
+    title: String,
+    body: String,
+    prompt: String,
+) -> Result<String, String> {
+    // Try local Claude Code first
+    if let Some(bin) = find_claude_binary() {
+        let full_prompt = format!(
+            "You are an AI writing assistant editing a note. \
+             Return ONLY the complete updated note body in plain markdown. \
+             Do not include the title, any explanations, preamble, or code fences. \
+             Preserve content that isn't being changed.\n\n\
+             --- Current Note ---\n\
+             Title: {}\n\n{}\n--- End Note ---\n\n\
+             Instruction: {}",
+            title, body, prompt
+        );
+
+        if let Ok(output) = tokio::process::Command::new(&bin)
+            .arg("-p")
+            .arg(&full_prompt)
+            .env("PATH", full_path())
+            .output()
+            .await
+        {
+            if output.status.success() {
+                let response = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                if !response.is_empty() {
+                    return Ok(clean_ai_response(response));
+                }
+            }
+        }
+    }
+
+    // Fall back to API
+    let api_key = get_api_key()?;
+    let system = format!(
+        "You are an AI writing assistant editing a note. \
+         Return ONLY the complete updated note body in plain markdown. \
+         Do not include the title, any explanations, preamble, or code fences. \
+         Preserve content that isn't being changed.\n\n\
+         --- Current Note ---\n\
+         Title: {}\n\n{}\n--- End Note ---",
+        title, body
+    );
+
+    let request = AnthropicRequest {
+        model: "claude-sonnet-4-20250514".to_string(),
+        max_tokens: 4096,
+        system,
+        messages: vec![ChatMessage {
+            role: "user".to_string(),
+            content: prompt,
+        }],
+    };
+
+    let client = reqwest::Client::new();
+    let response = client
+        .post("https://api.anthropic.com/v1/messages")
+        .header("x-api-key", &api_key)
+        .header("anthropic-version", "2023-06-01")
+        .header("content-type", "application/json")
+        .json(&request)
+        .send()
+        .await
+        .map_err(|e| format!("Request failed: {}", e))?;
+
+    if !response.status().is_success() {
+        let status = response.status();
+        let body = response.text().await.unwrap_or_default();
+        return Err(format!("API error ({}): {}", status, body));
+    }
+
+    let result: AnthropicResponse = response
+        .json()
+        .await
+        .map_err(|e| format!("Failed to parse response: {}", e))?;
+
+    let text = result
+        .content
+        .first()
+        .map(|c| c.text.clone())
+        .ok_or_else(|| "Empty response".to_string())?;
+
+    Ok(clean_ai_response(text))
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -395,6 +496,7 @@ pub fn run() {
             chat_with_local_claude,
             launch_claude_code,
             open_external,
+            ai_edit_note,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

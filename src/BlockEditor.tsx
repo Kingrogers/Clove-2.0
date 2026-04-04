@@ -10,10 +10,11 @@ import SlashMenu from "./SlashMenu";
 interface BlockEditorProps {
   noteId: string;
   content: string;
+  contentVersion?: number;
   onChange: (markdown: string) => void;
 }
 
-export default function BlockEditor({ noteId, content, onChange }: BlockEditorProps) {
+export default function BlockEditor({ noteId, content, contentVersion = 0, onChange }: BlockEditorProps) {
   const [slash, setSlash] = useState<{
     open: boolean;
     query: string;
@@ -87,16 +88,13 @@ export default function BlockEditor({ noteId, content, onChange }: BlockEditorPr
     setSlash((s) => ({ ...s, open: false }));
   }, []);
 
-  // Sync content when switching notes
+  // Sync content when switching notes or when content is updated externally (e.g. AI edit)
   useEffect(() => {
     if (editor && !editor.isDestroyed) {
-      const current = editor.storage.markdown.getMarkdown();
-      if (current !== content) {
-        editor.commands.setContent(content);
-      }
+      editor.commands.setContent(content);
       setSlash((s) => ({ ...s, open: false }));
     }
-  }, [noteId, editor]);
+  }, [noteId, contentVersion, editor]);
 
   // Close slash menu on blur/click outside
   useEffect(() => {

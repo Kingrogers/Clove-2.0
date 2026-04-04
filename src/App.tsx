@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import BlockEditor from "./BlockEditor";
 import ChatPanel from "./ChatPanel";
 import TasksView from "./TasksView";
+import AiPromptBar from "./AiPromptBar";
 import "./App.css";
 
 interface Note {
@@ -28,6 +29,10 @@ function App() {
   const [loaded, setLoaded] = useState(false);
   const [chatOpen, setChatOpen] = useState(false);
   const [view, setView] = useState<"notes" | "tasks">("notes");
+  const [aiPromptOpen, setAiPromptOpen] = useState(false);
+  const [aiEditing, setAiEditing] = useState(false);
+  const [aiError, setAiError] = useState<string | null>(null);
+  const [contentVersion, setContentVersion] = useState(0);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
@@ -84,6 +89,54 @@ function App() {
       return updated;
     });
   }, [saveToDisk]);
+
+  const runAiEdit = useCallback(async (prompt: string) => {
+    const target = notes.find((n) => n.id === activeId);
+    if (!target) return;
+    setAiPromptOpen(false);
+    setAiError(null);
+    setAiEditing(true);
+    const targetId = target.id;
+    try {
+      const newBody = await invoke<string>("ai_edit_note", {
+        title: target.title,
+        body: target.body,
+        prompt,
+      });
+      setNotes((prev) => {
+        const next = prev.map((n) => {
+          if (n.id !== targetId) return n;
+          const updated = { ...n, body: newBody, updatedAt: Date.now() };
+          invoke("save_note", { note: updated });
+          return updated;
+        });
+        return next;
+      });
+      if (targetId === activeId) {
+        setContentVersion((v) => v + 1);
+      }
+    } catch (e) {
+      setAiError(String(e));
+    } finally {
+      setAiEditing(false);
+    }
+  }, [notes, activeId]);
+
+  // ⌘K opens the AI prompt bar (when editing a note)
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        if (view === "notes" && activeId) {
+          setAiPromptOpen((o) => !o);
+        }
+      } else if (e.key === "Escape" && aiPromptOpen) {
+        setAiPromptOpen(false);
+      }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [view, activeId, aiPromptOpen]);
 
   const deleteNote = useCallback((id: string) => {
     invoke("delete_note", { id });
@@ -196,17 +249,26 @@ function App() {
                     onChange={(e) => updateNote(activeNote.id, "title", e.target.value)}
                   />
                   <button
+                    className="ai-cmdk-btn"
+                    onClick={() => setAiPromptOpen(true)}
+                    title="AI edit (⌘K)"
+                  >
+                    <span className="ai-cmdk-label">AI</span>
+                    <span className="ai-cmdk-kbd">⌘K</span>
+                  </button>
+                  <button
                     className={`ai-toggle ${chatOpen ? "active" : ""}`}
                     onClick={() => setChatOpen((o) => !o)}
-                    title="Toggle AI assistant"
+                    title="Toggle AI chat panel"
                   >
-                    AI
+                    Chat
                   </button>
                 </div>
                 <BlockEditor
                   key={activeNote.id}
                   noteId={activeNote.id}
                   content={activeNote.body}
+                  contentVersion={contentVersion}
                   onChange={(md) => updateNote(activeNote.id, "body", md)}
                 />
               </>
@@ -226,6 +288,27 @@ function App() {
         </>
       ) : (
         <TasksView />
+      )}
+
+      {aiPromptOpen && activeNote && (
+        <AiPromptBar
+          onSubmit={runAiEdit}
+          onClose={() => setAiPromptOpen(false)}
+        />
+      )}
+
+      {aiEditing && (
+        <div className="ai-status-pill">
+          <div className="ai-status-spinner" />
+          <span>AI editing note…</span>
+        </div>
+      )}
+
+      {aiError && !aiEditing && (
+        <div className="ai-status-pill ai-status-error" onClick={() => setAiError(null)}>
+          <span>AI error: {aiError}</span>
+          <span className="ai-status-dismiss">×</span>
+        </div>
       )}
     </div>
   );
