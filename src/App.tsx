@@ -1,50 +1,98 @@
-import { useState } from "react";
+import { useState, useEffect, useCallback } from "react";
 import "./App.css";
 
 interface Note {
   id: string;
   title: string;
   body: string;
-  updatedAt: Date;
+  updatedAt: number;
 }
 
-const SAMPLE_NOTES: Note[] = [
-  {
-    id: "1",
-    title: "Welcome to Clove",
-    body: "Clove is a minimal note-taking app. Start writing your thoughts here.",
-    updatedAt: new Date(),
-  },
-  {
-    id: "2",
-    title: "Getting Started",
-    body: "Click on a note in the sidebar to open it. Use the + button to create a new note.",
-    updatedAt: new Date(Date.now() - 3600000),
-  },
-  {
-    id: "3",
-    title: "Keyboard Shortcuts",
-    body: "More shortcuts coming soon.",
-    updatedAt: new Date(Date.now() - 86400000),
-  },
-];
+const STORAGE_KEY = "clove-notes";
 
-function formatTime(date: Date): string {
-  const now = new Date();
-  const diff = now.getTime() - date.getTime();
+function loadNotes(): Note[] {
+  const raw = localStorage.getItem(STORAGE_KEY);
+  if (raw) {
+    try {
+      return JSON.parse(raw);
+    } catch {
+      // corrupted — fall through to defaults
+    }
+  }
+  const defaults: Note[] = [
+    {
+      id: crypto.randomUUID(),
+      title: "Welcome to Clove",
+      body: "Clove is a minimal note-taking app. Start writing your thoughts here.",
+      updatedAt: Date.now(),
+    },
+  ];
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(defaults));
+  return defaults;
+}
+
+function saveNotes(notes: Note[]) {
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(notes));
+}
+
+function formatTime(ts: number): string {
+  const diff = Date.now() - ts;
   const mins = Math.floor(diff / 60000);
   if (mins < 1) return "Just now";
   if (mins < 60) return `${mins}m ago`;
   const hours = Math.floor(mins / 60);
   if (hours < 24) return `${hours}h ago`;
-  return date.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+  return new Date(ts).toLocaleDateString("en-US", { month: "short", day: "numeric" });
+}
+
+function initState(): { notes: Note[]; activeId: string | null } {
+  const notes = loadNotes();
+  return { notes, activeId: notes.length > 0 ? notes[0].id : null };
 }
 
 function App() {
-  const [notes] = useState<Note[]>(SAMPLE_NOTES);
-  const [activeId, setActiveId] = useState<string>("1");
+  const [initial] = useState(initState);
+  const [notes, setNotes] = useState<Note[]>(initial.notes);
+  const [activeId, setActiveId] = useState<string | null>(initial.activeId);
 
-  const activeNote = notes.find((n) => n.id === activeId);
+  // Auto-save whenever notes change
+  useEffect(() => {
+    saveNotes(notes);
+  }, [notes]);
+
+  const activeNote = notes.find((n) => n.id === activeId) ?? null;
+
+  const createNote = useCallback(() => {
+    const note: Note = {
+      id: crypto.randomUUID(),
+      title: "",
+      body: "",
+      updatedAt: Date.now(),
+    };
+    setNotes((prev) => [note, ...prev]);
+    setActiveId(note.id);
+  }, []);
+
+  const updateNote = useCallback((id: string, field: "title" | "body", value: string) => {
+    setNotes((prev) =>
+      prev.map((n) =>
+        n.id === id ? { ...n, [field]: value, updatedAt: Date.now() } : n
+      )
+    );
+  }, []);
+
+  const deleteNote = useCallback((id: string) => {
+    setNotes((prev) => {
+      const next = prev.filter((n) => n.id !== id);
+      if (id === activeId) {
+        setActiveId(next.length > 0 ? next[0].id : null);
+      }
+      return next;
+    });
+  }, [activeId]);
+
+  // Sort notes by most recently updated
+  const sorted = [...notes].sort((a, b) => b.updatedAt - a.updatedAt);
 
   return (
     <div className="app">
@@ -52,7 +100,7 @@ function App() {
       <aside className="sidebar">
         <div className="sidebar-header">
           <h1 className="logo">Clove</h1>
-          <button className="new-note-btn" title="New note">+</button>
+          <button className="new-note-btn" onClick={createNote} title="New note">+</button>
         </div>
 
         <div className="search-wrapper">
@@ -64,17 +112,31 @@ function App() {
         </div>
 
         <nav className="notes-list">
-          {notes.map((note) => (
-            <button
+          {sorted.map((note) => (
+            <div
               key={note.id}
               className={`note-item ${note.id === activeId ? "active" : ""}`}
               onClick={() => setActiveId(note.id)}
             >
-              <span className="note-item-title">{note.title}</span>
-              <span className="note-item-meta">
-                {formatTime(note.updatedAt)}
+              <span className="note-item-title">
+                {note.title || "Untitled"}
               </span>
-            </button>
+              <div className="note-item-bottom">
+                <span className="note-item-meta">
+                  {formatTime(note.updatedAt)}
+                </span>
+                <button
+                  className="note-delete-btn"
+                  title="Delete note"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    deleteNote(note.id);
+                  }}
+                >
+                  &times;
+                </button>
+              </div>
+            </div>
           ))}
         </nav>
       </aside>
@@ -87,19 +149,21 @@ function App() {
               <input
                 type="text"
                 className="editor-title"
+                placeholder="Untitled"
                 value={activeNote.title}
-                readOnly
+                onChange={(e) => updateNote(activeNote.id, "title", e.target.value)}
               />
             </div>
             <textarea
               className="editor-body"
+              placeholder="Start writing..."
               value={activeNote.body}
-              readOnly
+              onChange={(e) => updateNote(activeNote.id, "body", e.target.value)}
             />
           </>
         ) : (
           <div className="editor-empty">
-            <p>Select a note or create a new one</p>
+            <p>Create a note to get started</p>
           </div>
         )}
       </main>
