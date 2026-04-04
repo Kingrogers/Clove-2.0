@@ -9,8 +9,6 @@ interface Note {
   updatedAt: number;
 }
 
-type EditorMode = "block" | "markdown";
-
 const STORAGE_KEY = "clove-notes";
 
 function loadNotes(): Note[] {
@@ -57,7 +55,6 @@ function App() {
   const [initial] = useState(initState);
   const [notes, setNotes] = useState<Note[]>(initial.notes);
   const [activeId, setActiveId] = useState<string | null>(initial.activeId);
-  const [editorMode, setEditorMode] = useState<EditorMode>("block");
 
   useEffect(() => {
     saveNotes(notes);
@@ -98,7 +95,6 @@ function App() {
 
   return (
     <div className="app">
-      {/* Sidebar */}
       <aside className="sidebar">
         <div className="sidebar-header">
           <h1 className="logo">Clove</h1>
@@ -143,7 +139,6 @@ function App() {
         </nav>
       </aside>
 
-      {/* Editor */}
       <main className="editor">
         {activeNote ? (
           <>
@@ -155,40 +150,13 @@ function App() {
                 value={activeNote.title}
                 onChange={(e) => updateNote(activeNote.id, "title", e.target.value)}
               />
-              <div className="editor-toolbar">
-                <div className="mode-toggle">
-                  <button
-                    className={`mode-btn ${editorMode === "block" ? "active" : ""}`}
-                    onClick={() => setEditorMode("block")}
-                  >
-                    Block
-                  </button>
-                  <button
-                    className={`mode-btn ${editorMode === "markdown" ? "active" : ""}`}
-                    onClick={() => setEditorMode("markdown")}
-                  >
-                    Markdown
-                  </button>
-                </div>
-              </div>
             </div>
-
-            {editorMode === "block" ? (
-              <BlockEditor
-                key={activeNote.id}
-                noteId={activeNote.id}
-                content={activeNote.body}
-                onChange={(md) => updateNote(activeNote.id, "body", md)}
-              />
-            ) : (
-              <textarea
-                className="editor-body markdown-editor"
-                placeholder="Write in markdown..."
-                value={activeNote.body}
-                onChange={(e) => updateNote(activeNote.id, "body", e.target.value)}
-                spellCheck={false}
-              />
-            )}
+            <BlockEditor
+              key={activeNote.id}
+              noteId={activeNote.id}
+              content={activeNote.body}
+              onChange={(md) => updateNote(activeNote.id, "body", md)}
+            />
           </>
         ) : (
           <div className="editor-empty">

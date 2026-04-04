@@ -164,9 +164,6 @@
 
 .editor-header {
   padding: 24px 32px 0;
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
 }
 
 .editor-title {
@@ -181,70 +178,6 @@
 }
 
 .editor-title::placeholder {
-  color: #3f3f46;
-}
-
-/* Toolbar */
-.editor-toolbar {
-  display: flex;
-  align-items: center;
-  padding-bottom: 4px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
-}
-
-.mode-toggle {
-  display: flex;
-  background: rgba(255, 255, 255, 0.04);
-  border-radius: 6px;
-  padding: 2px;
-  gap: 1px;
-}
-
-.mode-btn {
-  padding: 4px 12px;
-  border: none;
-  border-radius: 4px;
-  background: transparent;
-  color: #71717a;
-  font-size: 0.78rem;
-  font-weight: 500;
-  cursor: pointer;
-  transition: background 0.12s, color 0.12s;
-  font-family: inherit;
-}
-
-.mode-btn:hover {
-  color: #a1a1aa;
-}
-
-.mode-btn.active {
-  background: rgba(255, 255, 255, 0.08);
-  color: #e4e4e7;
-}
-
-/* Markdown textarea */
-.editor-body {
-  flex: 1;
-  padding: 16px 32px 32px;
-  border: none;
-  background: transparent;
-  color: #d4d4d8;
-  font-size: 0.92rem;
-  line-height: 1.7;
-  resize: none;
-  outline: none;
-  font-family: inherit;
-}
-
-.markdown-editor {
-  font-family: "SF Mono", "Fira Code", "Fira Mono", Menlo, Consolas, monospace;
-  font-size: 0.85rem;
-  line-height: 1.6;
-  color: #a1a1aa;
-  tab-size: 2;
-}
-
-.editor-body::placeholder {
   color: #3f3f46;
 }
 
