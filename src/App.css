@@ -804,34 +804,139 @@
   cursor: not-allowed;
 }
 
-/* API Key Setup */
-.chat-key-setup {
+/* ── Connection Setup (clean, zero-friction) ── */
+.chat-setup-clean {
   flex: 1;
   display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
-  padding: 24px;
-}
-
-.chat-key-content {
-  display: flex;
-  flex-direction: column;
+  padding: 32px 28px;
   gap: 12px;
-  width: 100%;
+  text-align: center;
 }
 
-.chat-key-content h3 {
-  font-size: 0.95rem;
+.setup-claude-icon {
+  color: #3f3f46;
+  margin-bottom: 4px;
+}
+
+.setup-heading {
+  font-size: 1rem;
   font-weight: 600;
   color: #e4e4e7;
+  margin: 0;
 }
 
-.chat-key-content p {
-  font-size: 0.8rem;
-  color: #71717a;
-  line-height: 1.5;
+.setup-subtitle {
+  font-size: 0.82rem;
+  color: #52525b;
+  line-height: 1.6;
+  max-width: 260px;
+  margin: 0;
 }
 
+.setup-primary-btn {
+  width: 100%;
+  padding: 12px;
+  border: none;
+  border-radius: 10px;
+  background: #6366f1;
+  color: white;
+  font-size: 0.84rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.15s;
+  font-family: inherit;
+  margin-top: 4px;
+}
+
+.setup-primary-btn:hover {
+  background: #4f46e5;
+}
+
+.setup-auto-detect {
+  font-size: 0.72rem;
+  color: #3f3f46;
+  margin: 0;
+}
+
+.setup-text-link {
+  border: none;
+  background: transparent;
+  color: #52525b;
+  font-size: 0.78rem;
+  cursor: pointer;
+  padding: 4px;
+  transition: color 0.12s;
+  font-family: inherit;
+}
+
+.setup-text-link:hover {
+  color: #a1a1aa;
+}
+
+/* Connecting spinner */
+.connect-spinner {
+  width: 24px;
+  height: 24px;
+  border: 2px solid rgba(99, 102, 241, 0.2);
+  border-top-color: #6366f1;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+/* Status dot */
+.status-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.status-dot.green {
+  background: #22c55e;
+  box-shadow: 0 0 6px rgba(34, 197, 94, 0.4);
+}
+
+/* Version badge */
+.badge-model {
+  font-size: 0.62rem;
+  color: #52525b;
+  margin-left: 2px;
+}
+
+/* Connection badge in header */
+.chat-header-left {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.chat-connection-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 8px 2px 6px;
+  border-radius: 10px;
+  background: rgba(34, 197, 94, 0.08);
+  border: 1px solid rgba(34, 197, 94, 0.12);
+  font-size: 0.68rem;
+  color: #86efac;
+  cursor: pointer;
+  transition: all 0.12s;
+  width: fit-content;
+}
+
+.chat-connection-badge:hover {
+  background: rgba(34, 197, 94, 0.12);
+}
+
+/* API key input */
 .chat-key-input {
   width: 100%;
   padding: 10px 12px;
@@ -847,21 +952,4 @@
 
 .chat-key-input:focus {
   border-color: rgba(99, 102, 241, 0.4);
-}
-
-.chat-key-btn {
-  padding: 10px;
-  border: none;
-  border-radius: 8px;
-  background: #6366f1;
-  color: white;
-  font-size: 0.84rem;
-  font-weight: 500;
-  cursor: pointer;
-  transition: background 0.12s;
-  font-family: inherit;
-}
-
-.chat-key-btn:hover {
-  background: #4f46e5;
 }

@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
+use std::process::Command;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Note {
@@ -21,6 +22,15 @@ fn ensure_dir() {
     if !dir.exists() {
         fs::create_dir_all(&dir).expect("failed to create Clove notes directory");
     }
+}
+
+/// Build a PATH that includes common binary locations on macOS.
+fn full_path() -> String {
+    let base = std::env::var("PATH").unwrap_or_default();
+    format!(
+        "/usr/local/bin:/opt/homebrew/bin:/opt/homebrew/sbin:{}",
+        base
+    )
 }
 
 #[tauri::command]
@@ -103,7 +113,6 @@ fn get_api_key() -> Result<String, String> {
             .map(|s| s.trim().to_string())
             .map_err(|e| e.to_string())
     } else {
-        // Fall back to environment variable
         std::env::var("ANTHROPIC_API_KEY").map_err(|_| "No API key found".to_string())
     }
 }
@@ -170,6 +179,140 @@ async fn chat_with_claude(
         .ok_or_else(|| "Empty response from Claude".to_string())
 }
 
+// ── Local Claude Code ──
+
+/// Find the claude binary path, returning None if not found.
+fn find_claude_binary() -> Option<String> {
+    let known_paths = [
+        "/usr/local/bin/claude",
+        "/opt/homebrew/bin/claude",
+    ];
+
+    // Check known locations first
+    for p in &known_paths {
+        if std::path::Path::new(p).exists() {
+            return Some(p.to_string());
+        }
+    }
+
+    // Fall back to `which` with a full PATH
+    let output = Command::new("/usr/bin/which")
+        .arg("claude")
+        .env("PATH", full_path())
+        .output()
+        .ok()?;
+
+    if output.status.success() {
+        let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        if !path.is_empty() {
+            return Some(path);
+        }
+    }
+
+    None
+}
+
+#[tauri::command]
+fn check_claude_code() -> Result<String, String> {
+    let bin = match find_claude_binary() {
+        Some(p) => p,
+        None => return Err("Claude Code not found".to_string()),
+    };
+
+    let output = Command::new(&bin)
+        .arg("--version")
+        .env("PATH", full_path())
+        .output()
+        .map_err(|e| format!("Failed to run: {}", e))?;
+
+    if output.status.success() {
+        Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+    } else {
+        Err("Claude Code not working".to_string())
+    }
+}
+
+#[tauri::command]
+fn open_external(url: String) -> Result<(), String> {
+    Command::new("/usr/bin/open")
+        .arg(&url)
+        .spawn()
+        .map_err(|e| format!("Failed to open: {}", e))?;
+    Ok(())
+}
+
+#[tauri::command]
+async fn chat_with_local_claude(
+    message: String,
+    note_title: String,
+    note_body: String,
+    history: Vec<ChatMessage>,
+) -> Result<String, String> {
+    let bin = find_claude_binary()
+        .ok_or_else(|| "Claude Code not found. Install it or check your PATH.".to_string())?;
+
+    // Build prompt with note context and history
+    let mut prompt = format!(
+        "You are an AI assistant inside Clove, a note-taking app. \
+         The user is working on this note:\n\n\
+         --- Note: {} ---\n{}\n--- End Note ---\n\n",
+        note_title, note_body
+    );
+
+    if !history.is_empty() {
+        prompt.push_str("Conversation so far:\n");
+        for msg in &history {
+            let label = if msg.role == "user" { "User" } else { "Assistant" };
+            prompt.push_str(&format!("{}: {}\n", label, msg.content));
+        }
+        prompt.push('\n');
+    }
+
+    prompt.push_str(&format!("User: {}\n\nBe concise and helpful.", message));
+
+    let output = tokio::process::Command::new(&bin)
+        .arg("-p")
+        .arg(&prompt)
+        .env("PATH", full_path())
+        .output()
+        .await
+        .map_err(|e| format!("Failed to run Claude Code: {}", e))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!("Claude Code error: {}", stderr));
+    }
+
+    let response = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if response.is_empty() {
+        Err("Empty response from Claude Code".to_string())
+    } else {
+        Ok(response)
+    }
+}
+
+#[tauri::command]
+fn launch_claude_code() -> Result<(), String> {
+    // Try opening the Claude desktop app first
+    let result = Command::new("/usr/bin/open")
+        .arg("-a")
+        .arg("Claude")
+        .spawn();
+
+    if result.is_ok() {
+        return Ok(());
+    }
+
+    // If that fails, try opening a terminal with claude
+    Command::new("/usr/bin/open")
+        .arg("-a")
+        .arg("Terminal")
+        .spawn()
+        .map_err(|e| format!("Failed to launch: {}", e))?;
+
+    Err("Claude app not found. Opening Terminal — run 'claude' manually.".to_string())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -180,6 +323,10 @@ pub fn run() {
             chat_with_claude,
             get_api_key,
             save_api_key,
+            check_claude_code,
+            chat_with_local_claude,
+            launch_claude_code,
+            open_external,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
