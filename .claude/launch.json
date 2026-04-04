@@ -2,15 +2,9 @@
   "version": "0.0.1",
   "configurations": [
     {
-      "name": "vite-dev",
-      "runtimeExecutable": "/usr/local/bin/node",
-      "runtimeArgs": ["node_modules/.bin/vite"],
-      "port": 1420
-    },
-    {
-      "name": "tauri-dev",
-      "runtimeExecutable": "/usr/local/bin/npx",
-      "runtimeArgs": ["tauri", "dev"],
+      "name": "dev",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "dev"],
       "port": 1420
     }
   ]
