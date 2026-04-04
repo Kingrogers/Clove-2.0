@@ -1,4 +1,5 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
+import { invoke } from "@tauri-apps/api/core";
 import BlockEditor from "./BlockEditor";
 import "./App.css";
 
@@ -7,33 +8,6 @@ interface Note {
   title: string;
   body: string;
   updatedAt: number;
-}
-
-const STORAGE_KEY = "clove-notes";
-
-function loadNotes(): Note[] {
-  const raw = localStorage.getItem(STORAGE_KEY);
-  if (raw) {
-    try {
-      return JSON.parse(raw);
-    } catch {
-      // corrupted — fall through to defaults
-    }
-  }
-  const defaults: Note[] = [
-    {
-      id: crypto.randomUUID(),
-      title: "Welcome to Clove",
-      body: "Clove is a minimal note-taking app.\n\nStart writing your thoughts here.",
-      updatedAt: Date.now(),
-    },
-  ];
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(defaults));
-  return defaults;
-}
-
-function saveNotes(notes: Note[]) {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(notes));
 }
 
 function formatTime(ts: number): string {
@@ -46,19 +20,43 @@ function formatTime(ts: number): string {
   return new Date(ts).toLocaleDateString("en-US", { month: "short", day: "numeric" });
 }
 
-function initState(): { notes: Note[]; activeId: string | null } {
-  const notes = loadNotes();
-  return { notes, activeId: notes.length > 0 ? notes[0].id : null };
-}
-
 function App() {
-  const [initial] = useState(initState);
-  const [notes, setNotes] = useState<Note[]>(initial.notes);
-  const [activeId, setActiveId] = useState<string | null>(initial.activeId);
+  const [notes, setNotes] = useState<Note[]>([]);
+  const [activeId, setActiveId] = useState<string | null>(null);
+  const [loaded, setLoaded] = useState(false);
+  const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  // Load notes from disk on mount
   useEffect(() => {
-    saveNotes(notes);
-  }, [notes]);
+    invoke<Note[]>("list_notes").then((diskNotes) => {
+      if (diskNotes.length === 0) {
+        // Create a welcome note
+        const welcome: Note = {
+          id: crypto.randomUUID(),
+          title: "Welcome to Clove",
+          body: "Clove is a minimal note-taking app.\n\nStart writing your thoughts here.",
+          updatedAt: Date.now(),
+        };
+        invoke("save_note", { note: welcome }).then(() => {
+          setNotes([welcome]);
+          setActiveId(welcome.id);
+          setLoaded(true);
+        });
+      } else {
+        setNotes(diskNotes);
+        setActiveId(diskNotes[0].id);
+        setLoaded(true);
+      }
+    });
+  }, []);
+
+  // Debounced save to disk
+  const saveToDisk = useCallback((note: Note) => {
+    if (saveTimer.current) clearTimeout(saveTimer.current);
+    saveTimer.current = setTimeout(() => {
+      invoke("save_note", { note });
+    }, 300);
+  }, []);
 
   const activeNote = notes.find((n) => n.id === activeId) ?? null;
 
@@ -69,19 +67,25 @@ function App() {
       body: "",
       updatedAt: Date.now(),
     };
+    invoke("save_note", { note });
     setNotes((prev) => [note, ...prev]);
     setActiveId(note.id);
   }, []);
 
   const updateNote = useCallback((id: string, field: "title" | "body", value: string) => {
-    setNotes((prev) =>
-      prev.map((n) =>
-        n.id === id ? { ...n, [field]: value, updatedAt: Date.now() } : n
-      )
-    );
-  }, []);
+    setNotes((prev) => {
+      const updated = prev.map((n) => {
+        if (n.id !== id) return n;
+        const next = { ...n, [field]: value, updatedAt: Date.now() };
+        saveToDisk(next);
+        return next;
+      });
+      return updated;
+    });
+  }, [saveToDisk]);
 
   const deleteNote = useCallback((id: string) => {
+    invoke("delete_note", { id });
     setNotes((prev) => {
       const next = prev.filter((n) => n.id !== id);
       if (id === activeId) {
@@ -92,6 +96,23 @@ function App() {
   }, [activeId]);
 
   const sorted = [...notes].sort((a, b) => b.updatedAt - a.updatedAt);
+
+  if (!loaded) {
+    return (
+      <div className="app">
+        <aside className="sidebar">
+          <div className="sidebar-header">
+            <h1 className="logo">Clove</h1>
+          </div>
+        </aside>
+        <main className="editor">
+          <div className="editor-empty">
+            <p>Loading notes...</p>
+          </div>
+        </main>
+      </div>
+    );
+  }
 
   return (
     <div className="app">

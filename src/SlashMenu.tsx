@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import type { Editor } from "@tiptap/react";
 
-export interface SlashMenuItem {
+interface SlashMenuItem {
   id: string;
   label: string;
   description: string;
@@ -20,65 +20,37 @@ const ITEMS: SlashMenuItem[] = [
   {
     id: "h1",
     label: "Heading 1",
-    description: "Large heading",
+    description: "Large section heading",
     icon: "H1",
     action: (editor) => editor.chain().focus().toggleHeading({ level: 1 }).run(),
   },
   {
     id: "h2",
     label: "Heading 2",
-    description: "Medium heading",
+    description: "Medium section heading",
     icon: "H2",
     action: (editor) => editor.chain().focus().toggleHeading({ level: 2 }).run(),
   },
   {
-    id: "h3",
-    label: "Heading 3",
-    description: "Small heading",
-    icon: "H3",
-    action: (editor) => editor.chain().focus().toggleHeading({ level: 3 }).run(),
-  },
-  {
     id: "bullet",
     label: "Bullet List",
-    description: "Simple bullet list",
+    description: "Unordered list",
     icon: "•",
     action: (editor) => editor.chain().focus().toggleBulletList().run(),
   },
   {
     id: "numbered",
     label: "Numbered List",
-    description: "Ordered numbered list",
+    description: "Ordered list",
     icon: "1.",
     action: (editor) => editor.chain().focus().toggleOrderedList().run(),
   },
   {
     id: "todo",
     label: "To-do",
-    description: "Checkbox item",
+    description: "Task with checkbox",
     icon: "☐",
     action: (editor) => editor.chain().focus().toggleTaskList().run(),
-  },
-  {
-    id: "quote",
-    label: "Quote",
-    description: "Block quote",
-    icon: "❝",
-    action: (editor) => editor.chain().focus().toggleBlockquote().run(),
-  },
-  {
-    id: "code",
-    label: "Code Block",
-    description: "Fenced code block",
-    icon: "<>",
-    action: (editor) => editor.chain().focus().toggleCodeBlock().run(),
-  },
-  {
-    id: "divider",
-    label: "Divider",
-    description: "Horizontal rule",
-    icon: "—",
-    action: (editor) => editor.chain().focus().setHorizontalRule().run(),
   },
 ];
 
@@ -100,17 +72,15 @@ export default function SlashMenu({ editor, query, position, onSelect, onClose }
       item.description.toLowerCase().includes(query.toLowerCase())
   );
 
-  // Reset selection when filter changes
   useEffect(() => {
     setSelectedIndex(0);
   }, [query]);
 
   const executeItem = useCallback(
     (item: SlashMenuItem) => {
-      // Delete the slash and query text
       const { state } = editor;
       const { from } = state.selection;
-      const slashStart = from - query.length - 1; // -1 for the '/'
+      const slashStart = from - query.length - 1;
       editor.chain().focus().deleteRange({ from: slashStart, to: from }).run();
       item.action(editor);
       onSelect();
@@ -141,7 +111,6 @@ export default function SlashMenu({ editor, query, position, onSelect, onClose }
     return () => document.removeEventListener("keydown", handleKeyDown, true);
   }, [filtered, selectedIndex, executeItem, onClose]);
 
-  // Scroll selected item into view
   useEffect(() => {
     const menu = menuRef.current;
     if (!menu) return;
@@ -152,13 +121,14 @@ export default function SlashMenu({ editor, query, position, onSelect, onClose }
   if (filtered.length === 0) {
     return (
       <div className="slash-menu" style={{ top: position.top, left: position.left }} ref={menuRef}>
-        <div className="slash-menu-empty">No results</div>
+        <div className="slash-menu-empty">No matching blocks</div>
       </div>
     );
   }
 
   return (
     <div className="slash-menu" style={{ top: position.top, left: position.left }} ref={menuRef}>
+      <div className="slash-menu-header">Blocks</div>
       {filtered.map((item, i) => (
         <button
           key={item.id}

@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import { useEditor, EditorContent } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
 import Placeholder from "@tiptap/extension-placeholder";
@@ -20,17 +20,23 @@ export default function BlockEditor({ noteId, content, onChange }: BlockEditorPr
     position: { top: number; left: number };
   }>({ open: false, query: "", position: { top: 0, left: 0 } });
 
+  const slashRef = useRef(slash);
+  slashRef.current = slash;
+
   const editor = useEditor({
     extensions: [
       StarterKit.configure({
-        heading: { levels: [1, 2, 3] },
+        heading: { levels: [1, 2] },
+        dropcursor: { color: "rgba(99, 102, 241, 0.4)", width: 2 },
       }),
       TaskList,
       TaskItem.configure({ nested: true }),
       Placeholder.configure({
         placeholder: ({ node }) => {
-          if (node.type.name === "heading") return "Heading";
-          return "Type '/' for commands, or just start writing...";
+          if (node.type.name === "heading") {
+            return node.attrs.level === 1 ? "Heading 1" : "Heading 2";
+          }
+          return "Type '/' for blocks, or just start writing...";
         },
       }),
       Markdown.configure({
@@ -41,14 +47,10 @@ export default function BlockEditor({ noteId, content, onChange }: BlockEditorPr
     onUpdate: ({ editor }) => {
       onChange(editor.storage.markdown.getMarkdown());
 
-      // Track slash commands
       const { state } = editor;
       const { from } = state.selection;
-      const textBefore = state.doc.textBetween(
-        Math.max(0, from - 50),
-        from,
-        "\n"
-      );
+      const start = Math.max(0, from - 50);
+      const textBefore = state.doc.textBetween(start, from, "\n");
 
       const slashMatch = textBefore.match(/\/([a-zA-Z0-9-]*)$/);
       if (slashMatch) {
@@ -60,11 +62,11 @@ export default function BlockEditor({ noteId, content, onChange }: BlockEditorPr
           open: true,
           query: slashMatch[1],
           position: {
-            top: coords.bottom - rect.top + 4,
+            top: coords.bottom - rect.top + 6,
             left: coords.left - rect.left,
           },
         });
-      } else if (slash.open) {
+      } else if (slashRef.current.open) {
         setSlash((s) => ({ ...s, open: false }));
       }
     },
@@ -73,8 +75,7 @@ export default function BlockEditor({ noteId, content, onChange }: BlockEditorPr
         class: "block-editor-content",
       },
       handleKeyDown: (_view, event) => {
-        // Let the slash menu handle these keys
-        if (slash.open && ["ArrowUp", "ArrowDown", "Enter", "Escape"].includes(event.key)) {
+        if (slashRef.current.open && ["ArrowUp", "ArrowDown", "Enter", "Escape"].includes(event.key)) {
           return true;
         }
         return false;
@@ -82,7 +83,6 @@ export default function BlockEditor({ noteId, content, onChange }: BlockEditorPr
     },
   });
 
-  // Close slash menu on click outside
   const closeSlash = useCallback(() => {
     setSlash((s) => ({ ...s, open: false }));
   }, []);
@@ -97,6 +97,20 @@ export default function BlockEditor({ noteId, content, onChange }: BlockEditorPr
       setSlash((s) => ({ ...s, open: false }));
     }
   }, [noteId, editor]);
+
+  // Close slash menu on blur/click outside
+  useEffect(() => {
+    const handleClick = (e: MouseEvent) => {
+      if (slashRef.current.open) {
+        const target = e.target as HTMLElement;
+        if (!target.closest(".slash-menu")) {
+          setSlash((s) => ({ ...s, open: false }));
+        }
+      }
+    };
+    document.addEventListener("mousedown", handleClick);
+    return () => document.removeEventListener("mousedown", handleClick);
+  }, []);
 
   return (
     <div className="block-editor" style={{ position: "relative" }}>
