@@ -541,6 +541,27 @@ function App() {
     setView("notes");
   }, []);
 
+  const quickCaptureNote = useCallback((text: string) => {
+    const trimmed = text.trim();
+    if (!trimmed) return;
+    const lines = trimmed.split("\n");
+    const firstLine = lines[0].trim();
+    const rest = lines.slice(1).join("\n").trim();
+    // Short single-line capture → use as title
+    // Longer / multi-line capture → first line becomes title, rest becomes body
+    const isShort = lines.length === 1 && firstLine.length <= 80;
+    const now = Date.now();
+    const note: Note = {
+      id: crypto.randomUUID(),
+      title: isShort ? firstLine : firstLine.slice(0, 80),
+      body: isShort ? "" : rest,
+      updatedAt: now,
+      createdAt: now,
+    };
+    invoke("save_note", { note });
+    setNotes((prev) => [note, ...prev]);
+  }, []);
+
   const startSidebarResize = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
     e.preventDefault();
     sidebarResizeRef.current = { startX: e.clientX, startW: sidebarWidth };
@@ -670,6 +691,11 @@ function App() {
           notes={notes}
           folders={folders}
           onOpenNote={openNoteFromHome}
+          onCreateNote={quickCaptureNote}
+          onSwitchView={(v) => {
+            setActiveId(null);
+            setView(v);
+          }}
         />
       )}
 
