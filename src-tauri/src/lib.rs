@@ -3,6 +3,8 @@ use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
 
+mod embeddings;
+
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Note {
     pub id: String,
@@ -10,6 +12,8 @@ pub struct Note {
     pub body: String,
     #[serde(rename = "updatedAt")]
     pub updated_at: u64,
+    #[serde(rename = "folderId", default, skip_serializing_if = "Option::is_none")]
+    pub folder_id: Option<String>,
 }
 
 fn notes_dir() -> PathBuf {
@@ -62,12 +66,156 @@ fn save_note(note: Note) -> Result<(), String> {
     let path = notes_dir().join(format!("{}.json", note.id));
     let data = serde_json::to_string_pretty(&note).map_err(|e| e.to_string())?;
     fs::write(&path, data).map_err(|e| e.to_string())?;
+
+    // Update the semantic-search embedding in the background; ignore failures
+    // (e.g. if the model isn't ready yet) so saving is never blocked.
+    let id = note.id.clone();
+    let title = note.title.clone();
+    let body = note.body.clone();
+    let updated_at = note.updated_at;
+    std::thread::spawn(move || {
+        let _ = embeddings::upsert_note(&id, &title, &body, updated_at);
+    });
+
     Ok(())
 }
 
 #[tauri::command]
 fn delete_note(id: String) -> Result<(), String> {
     let path = notes_dir().join(format!("{}.json", id));
+    if path.exists() {
+        fs::remove_file(&path).map_err(|e| e.to_string())?;
+    }
+    let _ = embeddings::remove_note(&id);
+    Ok(())
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct SearchResult {
+    pub id: String,
+    pub score: f32,
+}
+
+#[tauri::command]
+async fn semantic_search(query: String, limit: Option<usize>) -> Result<Vec<SearchResult>, String> {
+    let k = limit.unwrap_or(10);
+    let q = query.clone();
+    let hits = tokio::task::spawn_blocking(move || embeddings::search(&q, k))
+        .await
+        .map_err(|e| e.to_string())??;
+    Ok(hits
+        .into_iter()
+        .map(|h| SearchResult {
+            id: h.id,
+            score: h.score,
+        })
+        .collect())
+}
+
+#[tauri::command]
+async fn rebuild_search_index() -> Result<usize, String> {
+    // Collect notes on the current thread (fast filesystem work) then hand off to a
+    // blocking task for the CPU-heavy embedding work.
+    let notes = list_notes()?;
+    let payload: Vec<(String, String, String, u64)> = notes
+        .into_iter()
+        .map(|n| (n.id, n.title, n.body, n.updated_at))
+        .collect();
+    tokio::task::spawn_blocking(move || embeddings::sync_index(&payload))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+fn search_index_size() -> usize {
+    embeddings::index_size()
+}
+
+// ── Folders ──
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct Folder {
+    pub id: String,
+    pub name: String,
+    #[serde(rename = "createdAt")]
+    pub created_at: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub color: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub favorite: Option<bool>,
+    #[serde(rename = "noteSort", default, skip_serializing_if = "Option::is_none")]
+    pub note_sort: Option<String>,
+}
+
+fn folders_dir() -> PathBuf {
+    let home = dirs::home_dir().expect("could not resolve home directory");
+    home.join("Documents").join("Clove").join("folders")
+}
+
+fn ensure_folders_dir() {
+    let dir = folders_dir();
+    if !dir.exists() {
+        fs::create_dir_all(&dir).expect("failed to create Clove folders directory");
+    }
+}
+
+#[tauri::command]
+fn list_folders() -> Result<Vec<Folder>, String> {
+    ensure_folders_dir();
+    let dir = folders_dir();
+    let mut folders: Vec<Folder> = Vec::new();
+
+    let entries = fs::read_dir(&dir).map_err(|e| e.to_string())?;
+    for entry in entries {
+        let entry = entry.map_err(|e| e.to_string())?;
+        let path = entry.path();
+        if path.extension().and_then(|s| s.to_str()) == Some("json") {
+            let data = fs::read_to_string(&path).map_err(|e| e.to_string())?;
+            match serde_json::from_str::<Folder>(&data) {
+                Ok(folder) => folders.push(folder),
+                Err(_) => continue,
+            }
+        }
+    }
+
+    folders.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+    Ok(folders)
+}
+
+#[tauri::command]
+fn save_folder(folder: Folder) -> Result<(), String> {
+    ensure_folders_dir();
+    let path = folders_dir().join(format!("{}.json", folder.id));
+    let data = serde_json::to_string_pretty(&folder).map_err(|e| e.to_string())?;
+    fs::write(&path, data).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
+fn delete_folder(id: String) -> Result<(), String> {
+    // Remove folder_id from notes in this folder
+    ensure_dir();
+    let notes_d = notes_dir();
+    if let Ok(entries) = fs::read_dir(&notes_d) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().and_then(|s| s.to_str()) != Some("json") {
+                continue;
+            }
+            if let Ok(data) = fs::read_to_string(&path) {
+                if let Ok(mut note) = serde_json::from_str::<Note>(&data) {
+                    if note.folder_id.as_deref() == Some(id.as_str()) {
+                        note.folder_id = None;
+                        if let Ok(out) = serde_json::to_string_pretty(&note) {
+                            let _ = fs::write(&path, out);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    let path = folders_dir().join(format!("{}.json", id));
     if path.exists() {
         fs::remove_file(&path).map_err(|e| e.to_string())?;
     }
@@ -481,11 +629,26 @@ async fn ai_edit_note(
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // Kick off embedding model warm-up and index sync in the background so the UI
+    // is never blocked and search is ready by the time the user needs it.
+    std::thread::spawn(|| {
+        if let Ok(notes) = list_notes() {
+            let payload: Vec<(String, String, String, u64)> = notes
+                .into_iter()
+                .map(|n| (n.id, n.title, n.body, n.updated_at))
+                .collect();
+            let _ = embeddings::sync_index(&payload);
+        }
+    });
+
     tauri::Builder::default()
         .invoke_handler(tauri::generate_handler![
             list_notes,
             save_note,
             delete_note,
+            list_folders,
+            save_folder,
+            delete_folder,
             list_tasks,
             save_task,
             delete_task,
@@ -497,6 +660,9 @@ pub fn run() {
             launch_claude_code,
             open_external,
             ai_edit_note,
+            semantic_search,
+            rebuild_search_index,
+            search_index_size,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
