@@ -8,6 +8,7 @@ import { Markdown } from "tiptap-markdown";
 import SlashMenu from "./SlashMenu";
 import NoteLinkMenu from "./NoteLinkMenu";
 import { NoteLink, NOTE_LINK_REGEX } from "./NoteLinkExtension";
+import BlockDragHandle from "./BlockDragHandle";
 
 interface NoteRef {
   id: string;
@@ -65,7 +66,7 @@ export default function BlockEditor({
     extensions: [
       StarterKit.configure({
         heading: { levels: [1, 2] },
-        dropcursor: { color: "rgba(99, 102, 241, 0.4)", width: 2 },
+        dropcursor: false,
       }),
       TaskList,
       TaskItem.configure({ nested: true }),
@@ -270,6 +271,7 @@ export default function BlockEditor({
   return (
     <div className="block-editor" style={{ position: "relative" }}>
       <EditorContent editor={editor} />
+      <BlockDragHandle editor={editor} />
       {slash.open && editor && (
         <SlashMenu
           editor={editor}

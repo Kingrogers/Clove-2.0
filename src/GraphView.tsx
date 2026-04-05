@@ -518,13 +518,19 @@ export default function GraphView({ notes, folders, onOpenNote }: Props) {
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       ctx.clearRect(0, 0, w, h);
 
+      // Theme-aware background + grid
+      const isDark =
+        document.documentElement.getAttribute("data-theme") === "dark";
+
       // Subtle background wash
-      ctx.fillStyle = "#fafbff";
+      ctx.fillStyle = isDark ? "#10141c" : "#fafbff";
       ctx.fillRect(0, 0, w, h);
 
       // Gentle grid (only when not zoomed way out)
       if (tr.k > 0.5) {
-        ctx.strokeStyle = "rgba(15, 23, 42, 0.035)";
+        ctx.strokeStyle = isDark
+          ? "rgba(255, 255, 255, 0.04)"
+          : "rgba(15, 23, 42, 0.035)";
         ctx.lineWidth = 1;
         const step = 40 * tr.k;
         const offX = tr.x % step;
@@ -625,7 +631,9 @@ export default function GraphView({ notes, folders, onOpenNote }: Props) {
               const connected =
                 hasFocus && (s.id === focus!.id || t.id === focus!.id);
               const baseAlpha = hasFocus ? (connected ? 0.85 : 0.08) : 0.42;
-              ctx.strokeStyle = connected ? "#4f46e5" : "#94a3b8";
+              ctx.strokeStyle = connected
+                ? (isDark ? "#818cf8" : "#4f46e5")
+                : (isDark ? "#4b5268" : "#94a3b8");
               ctx.lineWidth = (connected ? 1.6 : 1.1) / tr.k;
               ctx.globalAlpha = alpha * baseAlpha;
               ctx.beginPath();
@@ -684,8 +692,11 @@ export default function GraphView({ notes, folders, onOpenNote }: Props) {
             const isFocus = hasFocus && n.id === focus!.id;
             const isNeighbor = hasFocus && neighbors && neighbors.has(n.id);
             const dim = hasFocus && !isFocus && !isNeighbor ? 0.18 : 1;
-            ctx.fillStyle =
-              hasFocus && (isFocus || isNeighbor)
+            ctx.fillStyle = isDark
+              ? hasFocus && (isFocus || isNeighbor)
+                ? "rgba(232, 236, 244, 0.95)"
+                : "rgba(232, 236, 244, 0.68)"
+              : hasFocus && (isFocus || isNeighbor)
                 ? "rgba(15, 23, 42, 0.9)"
                 : "rgba(15, 23, 42, 0.62)";
             ctx.globalAlpha = labelAlpha * n.appearT * dim;
@@ -700,7 +711,7 @@ export default function GraphView({ notes, folders, onOpenNote }: Props) {
         if (focus) {
           const nx = focus.x as number;
           const ny = focus.y as number;
-          ctx.strokeStyle = "#4f46e5";
+          ctx.strokeStyle = isDark ? "#818cf8" : "#4f46e5";
           ctx.lineWidth = 2 / tr.k;
           ctx.globalAlpha = 0.95;
           ctx.beginPath();

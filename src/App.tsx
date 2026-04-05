@@ -9,6 +9,13 @@ import NotesView from "./NotesView";
 import GraphView from "./GraphView";
 import PropertiesPanel, { CustomField } from "./PropertiesPanel";
 import SidebarTree from "./SidebarTree";
+import {
+  SidebarToolbar,
+  SettingsModal,
+  GuideModal,
+  WhatsNewModal,
+  Theme,
+} from "./SidebarPanels";
 import "./App.css";
 
 interface Note {
@@ -50,6 +57,11 @@ function App() {
     return Number.isFinite(n) ? Math.min(480, Math.max(180, n)) : 248;
   });
   const sidebarResizeRef = useRef<{ startX: number; startW: number } | null>(null);
+  const [theme, setTheme] = useState<Theme>(() => {
+    const saved = typeof window !== "undefined" ? window.localStorage.getItem("clove:theme") : null;
+    return saved === "dark" ? "dark" : "light";
+  });
+  const [panelOpen, setPanelOpen] = useState<"settings" | "guide" | "whatsnew" | null>(null);
   const [aiPromptOpen, setAiPromptOpen] = useState(false);
   const [aiEditing, setAiEditing] = useState(false);
   const [aiError, setAiError] = useState<string | null>(null);
@@ -555,6 +567,11 @@ function App() {
     window.localStorage.setItem("clove:sidebarWidth", String(sidebarWidth));
   }, [sidebarWidth]);
 
+  useEffect(() => {
+    document.documentElement.setAttribute("data-theme", theme);
+    window.localStorage.setItem("clove:theme", theme);
+  }, [theme]);
+
   const openFolderFromHome = useCallback(
     (id: string) => {
       setActiveFolderId(id);
@@ -640,6 +657,12 @@ function App() {
             onReorderPinnedNotes={reorderPinnedNotes}
           />
         )}
+
+        <SidebarToolbar
+          onOpenSettings={() => setPanelOpen("settings")}
+          onOpenGuide={() => setPanelOpen("guide")}
+          onOpenWhatsNew={() => setPanelOpen("whatsnew")}
+        />
       </aside>
 
       {view === "home" && (
@@ -799,6 +822,20 @@ function App() {
           <span>AI error: {aiError}</span>
           <span className="ai-status-dismiss">×</span>
         </div>
+      )}
+
+      {panelOpen === "settings" && (
+        <SettingsModal
+          theme={theme}
+          onThemeChange={setTheme}
+          onClose={() => setPanelOpen(null)}
+        />
+      )}
+      {panelOpen === "guide" && (
+        <GuideModal onClose={() => setPanelOpen(null)} />
+      )}
+      {panelOpen === "whatsnew" && (
+        <WhatsNewModal onClose={() => setPanelOpen(null)} />
       )}
     </div>
   );
