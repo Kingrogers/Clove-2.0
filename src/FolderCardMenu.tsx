@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 
 export type FolderColor =
   | "default"
@@ -24,17 +25,16 @@ export const FOLDER_COLORS: { id: FolderColor; swatch: string; dot: string }[] =
 ];
 
 interface Props {
+  anchorEl: HTMLElement | null;
   folderName: string;
   noteCount: number;
   sizeLabel: string;
   color: FolderColor;
-  favorite: boolean;
   noteSort: NoteSort;
   onClose: () => void;
   onRename: () => void;
   onChangeColor: (color: FolderColor) => void;
   onDuplicate: () => void;
-  onToggleFavorite: () => void;
   onSetNoteSort: (sort: NoteSort) => void;
   onDelete: () => void;
 }
@@ -47,22 +47,22 @@ const SORT_LABELS: { id: NoteSort; label: string }[] = [
 ];
 
 export default function FolderCardMenu({
+  anchorEl,
   folderName,
   noteCount,
   sizeLabel,
   color,
-  favorite,
   noteSort,
   onClose,
   onRename,
   onChangeColor,
   onDuplicate,
-  onToggleFavorite,
   onSetNoteSort,
   onDelete,
 }: Props) {
   const menuRef = useRef<HTMLDivElement>(null);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
+  const [pos, setPos] = useState<{ top: number; left: number } | null>(null);
   const confirmTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
@@ -70,6 +70,56 @@ export default function FolderCardMenu({
       if (confirmTimer.current) clearTimeout(confirmTimer.current);
     };
   }, []);
+
+  // Compute position relative to anchor button, flipping/clamping to viewport
+  useLayoutEffect(() => {
+    if (!anchorEl) return;
+    const MENU_WIDTH = 260;
+    const MARGIN = 8;
+    // Find the nearest scrollable ancestor — clamp menu to its bounds so it
+    // doesn't spill over onto the sidebar or other panels
+    const findScrollParent = (el: HTMLElement | null): HTMLElement | null => {
+      let cur: HTMLElement | null = el?.parentElement ?? null;
+      while (cur && cur !== document.body) {
+        const s = window.getComputedStyle(cur);
+        if (/(auto|scroll|hidden)/.test(s.overflowY + s.overflowX + s.overflow)) {
+          return cur;
+        }
+        cur = cur.parentElement;
+      }
+      return null;
+    };
+    const scrollParent = findScrollParent(anchorEl);
+    const updatePos = () => {
+      const a = anchorEl.getBoundingClientRect();
+      const menuH = menuRef.current?.offsetHeight ?? 360;
+      // Compute horizontal clamp boundaries from scroll parent (or viewport)
+      const bounds = scrollParent
+        ? scrollParent.getBoundingClientRect()
+        : { left: 0, right: window.innerWidth, top: 0, bottom: window.innerHeight };
+      const minLeft = Math.max(MARGIN, bounds.left + MARGIN);
+      const maxRight = Math.min(window.innerWidth - MARGIN, bounds.right - MARGIN);
+      // Prefer aligning menu's right edge to button's right edge
+      let left = a.right - MENU_WIDTH;
+      // If that would push into the panel's left edge, flip to align under button's left
+      if (left < minLeft) left = Math.min(maxRight - MENU_WIDTH, a.left);
+      if (left < minLeft) left = minLeft;
+      if (left + MENU_WIDTH > maxRight) left = maxRight - MENU_WIDTH;
+      // Drop below the button; flip above if no room
+      let top = a.bottom + 6;
+      if (top + menuH > window.innerHeight - MARGIN) {
+        top = Math.max(MARGIN, a.top - menuH - 6);
+      }
+      setPos({ top, left });
+    };
+    updatePos();
+    window.addEventListener("resize", updatePos);
+    window.addEventListener("scroll", updatePos, true);
+    return () => {
+      window.removeEventListener("resize", updatePos);
+      window.removeEventListener("scroll", updatePos, true);
+    };
+  }, [anchorEl]);
 
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
@@ -92,10 +142,17 @@ export default function FolderCardMenu({
     };
   }, [onClose]);
 
-  return (
+  return createPortal(
     <div
       ref={menuRef}
       className="folder-menu"
+      style={{
+        position: "fixed",
+        top: pos?.top ?? -9999,
+        left: pos?.left ?? -9999,
+        right: "auto",
+        visibility: pos ? "visible" : "hidden",
+      }}
       onClick={(e) => e.stopPropagation()}
     >
       <button
@@ -137,18 +194,6 @@ export default function FolderCardMenu({
       >
         <span>Duplicate folder</span>
         <span className="folder-menu-icon">⎘</span>
-      </button>
-
-      <button
-        className="folder-menu-item"
-        onClick={() => {
-          onToggleFavorite();
-        }}
-      >
-        <span>{favorite ? "Unpin from sidebar" : "Pin to sidebar"}</span>
-        <span className={`folder-menu-icon ${favorite ? "favorited" : ""}`}>
-          {favorite ? "★" : "☆"}
-        </span>
       </button>
 
       <div className="folder-menu-separator" />
@@ -205,6 +250,7 @@ export default function FolderCardMenu({
         <span>{confirmingDelete ? "Tap again to confirm" : "Delete folder"}</span>
         <span className="folder-menu-icon">🗑</span>
       </button>
-    </div>
+    </div>,
+    document.body
   );
 }

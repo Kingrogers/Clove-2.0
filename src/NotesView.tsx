@@ -4,6 +4,7 @@ import FolderCardMenu, {
   FolderColor,
   NoteSort,
 } from "./FolderCardMenu";
+import NoteCardMenu from "./NoteCardMenu";
 
 interface Note {
   id: string;
@@ -11,6 +12,8 @@ interface Note {
   body: string;
   updatedAt: number;
   folderId?: string;
+  favorite?: boolean;
+  pinnedOrder?: number;
 }
 
 interface Folder {
@@ -19,6 +22,7 @@ interface Folder {
   createdAt: number;
   color?: string;
   favorite?: boolean;
+  order?: number;
   noteSort?: NoteSort;
 }
 
@@ -33,9 +37,14 @@ interface Props {
   onDeleteFolder: (id: string) => void;
   onRenameFolder: (id: string, name: string) => void;
   onSetFolderColor: (id: string, color: FolderColor) => void;
-  onToggleFolderFavorite: (id: string) => void;
   onSetFolderNoteSort: (id: string, sort: NoteSort) => void;
   onDuplicateFolder: (id: string) => void;
+  onToggleNoteFavorite: (id: string) => void;
+  onMoveNoteToFolder: (id: string, folderId: string | null) => void;
+  onDuplicateNote: (id: string) => void;
+  onDeleteNote: (id: string) => void;
+  onReorderFolders: (nextIds: string[]) => void;
+  onReorderPinnedNotes: (nextIds: string[]) => void;
 }
 
 function formatTime(ts: number): string {
@@ -102,26 +111,27 @@ export default function NotesView({
   onDeleteFolder,
   onRenameFolder,
   onSetFolderColor,
-  onToggleFolderFavorite,
   onSetFolderNoteSort,
   onDuplicateFolder,
+  onToggleNoteFavorite,
+  onMoveNoteToFolder,
+  onDuplicateNote,
+  onDeleteNote,
+  onReorderFolders,
+  onReorderPinnedNotes,
 }: Props) {
+  const [noteMenuOpenId, setNoteMenuOpenId] = useState<string | null>(null);
+  const [dragId, setDragId] = useState<string | null>(null);
+  const [dragOverId, setDragOverId] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
   const [newName, setNewName] = useState("");
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState("");
   const [menuOpenId, setMenuOpenId] = useState<string | null>(null);
-  const [starAnim, setStarAnim] = useState<{ id: string; mode: "star" | "unstar" } | null>(null);
+  const menuAnchorRef = useRef<HTMLButtonElement | null>(null);
   const [noteSort, setNoteSort] = useState<NoteSort>("newest");
   const [noteFolderFilter, setNoteFolderFilter] = useState<string>("all");
   const renameRef = useRef<HTMLInputElement>(null);
-  const starTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  useEffect(() => {
-    return () => {
-      if (starTimer.current) clearTimeout(starTimer.current);
-    };
-  }, []);
 
   useEffect(() => {
     if (renamingId && renameRef.current) {
@@ -138,7 +148,18 @@ export default function NotesView({
       : n.folderId === noteFolderFilter
   );
 
-  const sortedNotes = [...filteredNotes].sort((a, b) => {
+  const pinnedNotes = [...filteredNotes]
+    .filter((n) => n.favorite)
+    .sort((a, b) => {
+      const ao = a.pinnedOrder ?? Number.MAX_SAFE_INTEGER;
+      const bo = b.pinnedOrder ?? Number.MAX_SAFE_INTEGER;
+      if (ao !== bo) return ao - bo;
+      return b.updatedAt - a.updatedAt;
+    });
+
+  const regularNotes = filteredNotes.filter((n) => !n.favorite);
+
+  const sortedNotes = [...regularNotes].sort((a, b) => {
     switch (noteSort) {
       case "oldest":
         return a.updatedAt - b.updatedAt;
@@ -158,9 +179,11 @@ export default function NotesView({
 
   const recent = sortedNotes.slice(0, 12);
 
-  // Pinned folders first, then alphabetical
+  // Ordered by saved `order`, then alphabetical
   const sortedFolders = [...folders].sort((a, b) => {
-    if (!!a.favorite !== !!b.favorite) return a.favorite ? -1 : 1;
+    const ao = a.order ?? Number.MAX_SAFE_INTEGER;
+    const bo = b.order ?? Number.MAX_SAFE_INTEGER;
+    if (ao !== bo) return ao - bo;
     return a.name.toLowerCase().localeCompare(b.name.toLowerCase());
   });
 
@@ -194,13 +217,85 @@ export default function NotesView({
     setRenameValue("");
   };
 
-  const handleStarClick = (e: React.MouseEvent, folder: Folder) => {
-    e.stopPropagation();
-    const willFav = !folder.favorite;
-    if (starTimer.current) clearTimeout(starTimer.current);
-    setStarAnim({ id: folder.id, mode: willFav ? "star" : "unstar" });
-    starTimer.current = setTimeout(() => setStarAnim(null), 440);
-    onToggleFolderFavorite(folder.id);
+  // ── Drag-and-drop helpers ──
+  const dragKindRef = useRef<"folder" | "pin" | null>(null);
+  const dragIdRef = useRef<string | null>(null);
+
+  // Insert-before semantics: drop-on-target inserts the dragged item
+  // just before the target in the final list. This matches the visual
+  // indicator (a line drawn on the target's leading edge).
+  const moveInArray = (arr: string[], from: number, to: number): string[] => {
+    const copy = [...arr];
+    const [item] = copy.splice(from, 1);
+    const insertAt = from < to ? to - 1 : to;
+    copy.splice(insertAt, 0, item);
+    return copy;
+  };
+
+  const handleFolderDragStart = (id: string) => (e: React.DragEvent) => {
+    dragKindRef.current = "folder";
+    dragIdRef.current = id;
+    setDragId(id);
+    e.dataTransfer.effectAllowed = "move";
+    try { e.dataTransfer.setData("text/plain", id); } catch {}
+  };
+  const handleFolderDragOver = (id: string) => (e: React.DragEvent) => {
+    if (dragKindRef.current !== "folder") return;
+    if (dragIdRef.current === id) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "move";
+    if (dragOverId !== id) setDragOverId(id);
+  };
+  const handleFolderDrop = (id: string) => (e: React.DragEvent) => {
+    e.preventDefault();
+    const from = dragIdRef.current;
+    if (dragKindRef.current !== "folder" || !from || from === id) {
+      handleDragEnd();
+      return;
+    }
+    const ids = sortedFolders.map((f) => f.id);
+    const fromIdx = ids.indexOf(from);
+    const toIdx = ids.indexOf(id);
+    if (fromIdx !== -1 && toIdx !== -1) {
+      onReorderFolders(moveInArray(ids, fromIdx, toIdx));
+    }
+    handleDragEnd();
+  };
+  const handleDragEnd = () => {
+    dragKindRef.current = null;
+    dragIdRef.current = null;
+    setDragId(null);
+    setDragOverId(null);
+  };
+
+  const handlePinDragStart = (id: string) => (e: React.DragEvent) => {
+    dragKindRef.current = "pin";
+    dragIdRef.current = id;
+    setDragId(id);
+    e.dataTransfer.effectAllowed = "move";
+    try { e.dataTransfer.setData("text/plain", id); } catch {}
+  };
+  const handlePinDragOver = (id: string) => (e: React.DragEvent) => {
+    if (dragKindRef.current !== "pin") return;
+    if (dragIdRef.current === id) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "move";
+    if (dragOverId !== id) setDragOverId(id);
+  };
+  const handlePinDrop = (id: string) => (e: React.DragEvent) => {
+    e.preventDefault();
+    const from = dragIdRef.current;
+    if (dragKindRef.current !== "pin" || !from || from === id) {
+      handleDragEnd();
+      return;
+    }
+    const ids = pinnedNotes.map((n) => n.id);
+    const fromIdx = ids.indexOf(from);
+    const toIdx = ids.indexOf(id);
+    if (fromIdx !== -1 && toIdx !== -1) {
+      onReorderPinnedNotes(moveInArray(ids, fromIdx, toIdx));
+    }
+    handleDragEnd();
   };
 
   return (
@@ -250,18 +345,18 @@ export default function NotesView({
               .filter((n) => n.folderId === f.id)
               .sort((a, b) => b.updatedAt - a.updatedAt)
               .slice(0, 2);
-            const starAnimClass =
-              starAnim?.id === f.id
-                ? starAnim.mode === "star"
-                  ? "anim-star"
-                  : "anim-unstar"
-                : "";
-
+            const isDragOver = dragOverId === f.id;
+            const isDragging = dragId === f.id;
             return (
               <div
                 key={f.id}
-                className={`folder-card ${isActive ? "active" : ""} ${colored ? "colored" : ""} ${menuOpen ? "menu-open" : ""}`}
+                className={`folder-card ${isActive ? "active" : ""} ${colored ? "colored" : ""} ${menuOpen ? "menu-open" : ""} ${isDragging ? "dragging" : ""} ${isDragOver ? "drag-over" : ""}`}
                 style={cardStyle}
+                draggable={!isRenaming && !menuOpen}
+                onDragStart={handleFolderDragStart(f.id)}
+                onDragOver={handleFolderDragOver(f.id)}
+                onDrop={handleFolderDrop(f.id)}
+                onDragEnd={handleDragEnd}
                 onClick={() => {
                   if (isRenaming || menuOpen) return;
                   onOpenFolder(f.id);
@@ -308,19 +403,17 @@ export default function NotesView({
                 )}
 
                 <button
-                  className={`folder-star-btn ${f.favorite ? "active" : ""} ${starAnimClass}`}
-                  title={f.favorite ? "Unpin from sidebar" : "Pin to sidebar"}
-                  onClick={(e) => handleStarClick(e, f)}
-                >
-                  {f.favorite ? "★" : "☆"}
-                </button>
-
-                <button
                   className={`folder-menu-btn ${menuOpen ? "open" : ""}`}
                   title="More options"
                   onClick={(e) => {
                     e.stopPropagation();
-                    setMenuOpenId(menuOpen ? null : f.id);
+                    if (menuOpen) {
+                      menuAnchorRef.current = null;
+                      setMenuOpenId(null);
+                    } else {
+                      menuAnchorRef.current = e.currentTarget;
+                      setMenuOpenId(f.id);
+                    }
                   }}
                 >
                   ⋯
@@ -328,17 +421,19 @@ export default function NotesView({
 
                 {menuOpen && (
                   <FolderCardMenu
+                    anchorEl={menuAnchorRef.current}
                     folderName={f.name}
                     noteCount={count}
                     sizeLabel={formatSize(size)}
                     color={(f.color as FolderColor) || "default"}
-                    favorite={!!f.favorite}
                     noteSort={f.noteSort || "newest"}
-                    onClose={() => setMenuOpenId(null)}
+                    onClose={() => {
+                      menuAnchorRef.current = null;
+                      setMenuOpenId(null);
+                    }}
                     onRename={() => startRename(f)}
                     onChangeColor={(c) => onSetFolderColor(f.id, c)}
                     onDuplicate={() => onDuplicateFolder(f.id)}
-                    onToggleFavorite={() => onToggleFolderFavorite(f.id)}
                     onSetNoteSort={(s) => onSetFolderNoteSort(f.id, s)}
                     onDelete={() => onDeleteFolder(f.id)}
                   />
@@ -405,17 +500,104 @@ export default function NotesView({
           </div>
         </div>
 
+        {pinnedNotes.length > 0 && (
+          <div className="pinned-notes-section">
+            <div className="pinned-notes-label">Pinned</div>
+            <div className="note-grid pinned-grid">
+              {pinnedNotes.map((note) => {
+                const folder = note.folderId
+                  ? folders.find((f) => f.id === note.folderId)
+                  : null;
+                const menuOpen = noteMenuOpenId === note.id;
+                const isDragging = dragId === note.id;
+                const isDragOver = dragOverId === note.id;
+                return (
+                  <div
+                    key={note.id}
+                    className={`note-card compact ${menuOpen ? "menu-open" : ""} ${isDragging ? "dragging" : ""} ${isDragOver ? "drag-over" : ""}`}
+                    draggable={!menuOpen}
+                    onDragStart={handlePinDragStart(note.id)}
+                    onDragOver={handlePinDragOver(note.id)}
+                    onDrop={handlePinDrop(note.id)}
+                    onDragEnd={handleDragEnd}
+                    onClick={() => {
+                      if (menuOpen) return;
+                      onOpenNote(note.id);
+                    }}
+                  >
+                    <div className="note-card-top">
+                      <span className="note-card-date">
+                        {formatDate(note.updatedAt)}
+                      </span>
+                      {folder ? (
+                        <span className="note-card-folder">{folder.name}</span>
+                      ) : (
+                        <span className="note-card-folder note-card-folder-empty">
+                          Unfiled
+                        </span>
+                      )}
+                    </div>
+                    <div className="note-card-header">
+                      <div className="note-card-title">
+                        {note.title || "Untitled"}
+                      </div>
+                      <button
+                        className={`note-card-menu-btn ${menuOpen ? "open" : ""}`}
+                        title="More options"
+                        aria-label="Note options"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setNoteMenuOpenId(menuOpen ? null : note.id);
+                        }}
+                      >
+                        ⋯
+                      </button>
+                    </div>
+                    <div className="note-card-footer">
+                      <span className="note-card-time-icon" aria-hidden="true">
+                        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round">
+                          <circle cx="8" cy="8" r="6.2" />
+                          <path d="M8 4.6 V8 L10.4 9.6" />
+                        </svg>
+                      </span>
+                      <span className="note-card-time">
+                        {formatTime(note.updatedAt)}
+                      </span>
+                    </div>
+                    {menuOpen && (
+                      <NoteCardMenu
+                        favorite={true}
+                        currentFolderId={note.folderId ?? null}
+                        folders={folders}
+                        onClose={() => setNoteMenuOpenId(null)}
+                        onToggleFavorite={() => onToggleNoteFavorite(note.id)}
+                        onMoveToFolder={(fid) => onMoveNoteToFolder(note.id, fid)}
+                        onDuplicate={() => onDuplicateNote(note.id)}
+                        onDelete={() => onDeleteNote(note.id)}
+                      />
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
         <div className="note-grid">
           {recent.map((note) => {
             const folder = note.folderId
               ? folders.find((f) => f.id === note.folderId)
               : null;
             const preview = snippet(note.body, 220);
+            const menuOpen = noteMenuOpenId === note.id;
             return (
               <div
                 key={note.id}
-                className="note-card"
-                onClick={() => onOpenNote(note.id)}
+                className={`note-card ${menuOpen ? "menu-open" : ""}`}
+                onClick={() => {
+                  if (menuOpen) return;
+                  onOpenNote(note.id);
+                }}
               >
                 <div className="note-card-top">
                   <span className="note-card-date">
@@ -433,7 +615,17 @@ export default function NotesView({
                   <div className="note-card-title">
                     {note.title || "Untitled"}
                   </div>
-                  <span className="note-card-edit" aria-hidden="true">✎</span>
+                  <button
+                    className={`note-card-menu-btn ${menuOpen ? "open" : ""}`}
+                    title="More options"
+                    aria-label="Note options"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setNoteMenuOpenId(menuOpen ? null : note.id);
+                    }}
+                  >
+                    ⋯
+                  </button>
                 </div>
                 <div className="note-card-divider" />
                 <div className="note-card-body">
@@ -450,6 +642,19 @@ export default function NotesView({
                     {formatTime(note.updatedAt)}
                   </span>
                 </div>
+
+                {menuOpen && (
+                  <NoteCardMenu
+                    favorite={false}
+                    currentFolderId={note.folderId ?? null}
+                    folders={folders}
+                    onClose={() => setNoteMenuOpenId(null)}
+                    onToggleFavorite={() => onToggleNoteFavorite(note.id)}
+                    onMoveToFolder={(fid) => onMoveNoteToFolder(note.id, fid)}
+                    onDuplicate={() => onDuplicateNote(note.id)}
+                    onDelete={() => onDeleteNote(note.id)}
+                  />
+                )}
               </div>
             );
           })}
@@ -469,7 +674,7 @@ export default function NotesView({
           </button>
         </div>
 
-        {recent.length === 0 && notes.length > 0 && (
+        {recent.length === 0 && pinnedNotes.length === 0 && notes.length > 0 && (
           <div className="recent-empty">No notes match the current filter.</div>
         )}
       </section>

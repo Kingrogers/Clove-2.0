@@ -6,6 +6,9 @@ import TasksView from "./TasksView";
 import AiPromptBar from "./AiPromptBar";
 import HomeView from "./HomeView";
 import NotesView from "./NotesView";
+import GraphView from "./GraphView";
+import PropertiesPanel, { CustomField } from "./PropertiesPanel";
+import SidebarTree from "./SidebarTree";
 import "./App.css";
 
 interface Note {
@@ -13,7 +16,13 @@ interface Note {
   title: string;
   body: string;
   updatedAt: number;
+  createdAt?: number;
   folderId?: string;
+  favorite?: boolean;
+  pinnedOrder?: number;
+  description?: string;
+  tags?: string[];
+  customFields?: CustomField[];
 }
 
 interface Folder {
@@ -22,17 +31,8 @@ interface Folder {
   createdAt: number;
   color?: string;
   favorite?: boolean;
+  order?: number;
   noteSort?: "az" | "za" | "newest" | "oldest";
-}
-
-function formatTime(ts: number): string {
-  const diff = Date.now() - ts;
-  const mins = Math.floor(diff / 60000);
-  if (mins < 1) return "Just now";
-  if (mins < 60) return `${mins}m ago`;
-  const hours = Math.floor(mins / 60);
-  if (hours < 24) return `${hours}h ago`;
-  return new Date(ts).toLocaleDateString("en-US", { month: "short", day: "numeric" });
 }
 
 function App() {
@@ -42,12 +42,21 @@ function App() {
   const [activeFolderId, setActiveFolderId] = useState<string | null>(null);
   const [loaded, setLoaded] = useState(false);
   const [chatOpen, setChatOpen] = useState(false);
-  const [view, setView] = useState<"home" | "notes" | "tasks">("home");
+  const [propertiesOpen, setPropertiesOpen] = useState(true);
+  const [view, setView] = useState<"home" | "notes" | "tasks" | "graph">("home");
+  const [sidebarWidth, setSidebarWidth] = useState<number>(() => {
+    const saved = typeof window !== "undefined" ? window.localStorage.getItem("clove:sidebarWidth") : null;
+    const n = saved ? parseInt(saved, 10) : 248;
+    return Number.isFinite(n) ? Math.min(480, Math.max(180, n)) : 248;
+  });
+  const sidebarResizeRef = useRef<{ startX: number; startW: number } | null>(null);
   const [aiPromptOpen, setAiPromptOpen] = useState(false);
   const [aiEditing, setAiEditing] = useState(false);
   const [aiError, setAiError] = useState<string | null>(null);
   const [contentVersion, setContentVersion] = useState(0);
+  const [propsGenerating, setPropsGenerating] = useState<Set<string>>(new Set());
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const propsTimers = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
 
   useEffect(() => {
     Promise.all([
@@ -56,11 +65,13 @@ function App() {
     ]).then(([diskNotes, diskFolders]) => {
       setFolders(diskFolders);
       if (diskNotes.length === 0) {
+        const now = Date.now();
         const welcome: Note = {
           id: crypto.randomUUID(),
           title: "Welcome to Clove",
           body: "Clove is a minimal note-taking app.\n\nStart writing your thoughts here.",
-          updatedAt: Date.now(),
+          updatedAt: now,
+          createdAt: now,
         };
         invoke("save_note", { note: welcome }).then(() => {
           setNotes([welcome]);
@@ -68,8 +79,12 @@ function App() {
           setLoaded(true);
         });
       } else {
-        setNotes(diskNotes);
-        setActiveId(diskNotes[0].id);
+        // Backfill createdAt for older notes so properties panel always has a value
+        const migrated = diskNotes.map((n) =>
+          n.createdAt == null ? { ...n, createdAt: n.updatedAt } : n
+        );
+        setNotes(migrated);
+        setActiveId(migrated[0].id);
         setLoaded(true);
       }
     });
@@ -84,18 +99,24 @@ function App() {
 
   const activeNote = notes.find((n) => n.id === activeId) ?? null;
 
-  const createNote = useCallback(() => {
-    const note: Note = {
-      id: crypto.randomUUID(),
-      title: "",
-      body: "",
-      updatedAt: Date.now(),
-      folderId: activeFolderId ?? undefined,
-    };
-    invoke("save_note", { note });
-    setNotes((prev) => [note, ...prev]);
-    setActiveId(note.id);
-  }, [activeFolderId]);
+  const createNote = useCallback(
+    (folderId?: string) => {
+      const now = Date.now();
+      const resolvedFolder = folderId ?? activeFolderId ?? undefined;
+      const note: Note = {
+        id: crypto.randomUUID(),
+        title: "",
+        body: "",
+        updatedAt: now,
+        createdAt: now,
+        folderId: resolvedFolder,
+      };
+      invoke("save_note", { note });
+      setNotes((prev) => [note, ...prev]);
+      setActiveId(note.id);
+    },
+    [activeFolderId]
+  );
 
   const createFolder = useCallback((name: string) => {
     const folder: Folder = {
@@ -142,21 +163,6 @@ function App() {
     [updateFolder]
   );
 
-  const toggleFolderFavorite = useCallback(
-    (id: string) => {
-      setFolders((prev) => {
-        const target = prev.find((f) => f.id === id);
-        if (!target) return prev;
-        const updated = { ...target, favorite: !target.favorite || undefined };
-        // Normalize: undefined when false so it's not persisted
-        if (!updated.favorite) delete updated.favorite;
-        invoke("save_folder", { folder: updated });
-        return prev.map((f) => (f.id === id ? updated : f));
-      });
-    },
-    []
-  );
-
   const setFolderNoteSort = useCallback(
     (id: string, sort: "az" | "za" | "newest" | "oldest") => {
       updateFolder(id, { noteSort: sort });
@@ -198,6 +204,38 @@ function App() {
     [folders, notes]
   );
 
+  const reorderFolders = useCallback((nextIds: string[]) => {
+    setFolders((prev) => {
+      const byId = new Map(prev.map((f) => [f.id, f]));
+      const next = nextIds
+        .map((id, i) => {
+          const f = byId.get(id);
+          if (!f) return null;
+          const updated = { ...f, order: i };
+          invoke("save_folder", { folder: updated });
+          return updated;
+        })
+        .filter((f): f is Folder => f !== null);
+      // Include any folders not in nextIds at the end
+      for (const f of prev) {
+        if (!nextIds.includes(f.id)) next.push(f);
+      }
+      return next;
+    });
+  }, []);
+
+  const reorderPinnedNotes = useCallback((nextIds: string[]) => {
+    setNotes((prev) => {
+      return prev.map((n) => {
+        const idx = nextIds.indexOf(n.id);
+        if (idx === -1) return n;
+        const updated = { ...n, pinnedOrder: idx };
+        invoke("save_note", { note: updated });
+        return updated;
+      });
+    });
+  }, []);
+
   const deleteFolder = useCallback((id: string) => {
     invoke("delete_folder", { id });
     setFolders((prev) => prev.filter((f) => f.id !== id));
@@ -226,6 +264,66 @@ function App() {
     []
   );
 
+  // Runs the AI property-extraction for a single note, persists the result,
+  // and updates in-memory state. Silently no-ops on failures (best-effort).
+  const runPropertiesGeneration = useCallback(async (noteId: string) => {
+    const current = await new Promise<Note | null>((resolve) => {
+      setNotes((prev) => {
+        resolve(prev.find((n) => n.id === noteId) ?? null);
+        return prev;
+      });
+    });
+    if (!current) return;
+    // Skip empty notes entirely
+    if (!current.title.trim() && !current.body.trim()) return;
+    setPropsGenerating((prev) => {
+      const next = new Set(prev);
+      next.add(noteId);
+      return next;
+    });
+    try {
+      const props = await invoke<{ description: string; tags: string[] }>(
+        "generate_note_properties",
+        { title: current.title, body: current.body }
+      );
+      setNotes((prev) => {
+        const next = prev.map((n) => {
+          if (n.id !== noteId) return n;
+          const updated: Note = {
+            ...n,
+            description: props.description || n.description,
+            tags: props.tags && props.tags.length > 0 ? props.tags : n.tags,
+          };
+          invoke("save_note", { note: updated });
+          return updated;
+        });
+        return next;
+      });
+    } catch {
+      // best-effort; don't disrupt editing
+    } finally {
+      setPropsGenerating((prev) => {
+        const next = new Set(prev);
+        next.delete(noteId);
+        return next;
+      });
+    }
+  }, []);
+
+  // Schedule AI property extraction after the user pauses editing.
+  const schedulePropertiesGeneration = useCallback(
+    (noteId: string) => {
+      const existing = propsTimers.current.get(noteId);
+      if (existing) clearTimeout(existing);
+      const timer = setTimeout(() => {
+        propsTimers.current.delete(noteId);
+        runPropertiesGeneration(noteId);
+      }, 3500);
+      propsTimers.current.set(noteId, timer);
+    },
+    [runPropertiesGeneration]
+  );
+
   const updateNote = useCallback((id: string, field: "title" | "body", value: string) => {
     setNotes((prev) => {
       const updated = prev.map((n) => {
@@ -236,7 +334,86 @@ function App() {
       });
       return updated;
     });
-  }, [saveToDisk]);
+    schedulePropertiesGeneration(id);
+  }, [saveToDisk, schedulePropertiesGeneration]);
+
+  // Property-panel mutations
+  const removeTag = useCallback(
+    (id: string, tag: string) => {
+      setNotes((prev) => {
+        const next = prev.map((n) => {
+          if (n.id !== id) return n;
+          const tags = (n.tags ?? []).filter((t) => t !== tag);
+          const updated = { ...n, tags, updatedAt: Date.now() };
+          invoke("save_note", { note: updated });
+          return updated;
+        });
+        return next;
+      });
+    },
+    []
+  );
+
+  const addCustomField = useCallback(
+    (id: string, field: CustomField) => {
+      setNotes((prev) => {
+        const next = prev.map((n) => {
+          if (n.id !== id) return n;
+          const existing = n.customFields ?? [];
+          if (existing.some((f) => f.key === field.key)) return n;
+          const updated = {
+            ...n,
+            customFields: [...existing, field],
+            updatedAt: Date.now(),
+          };
+          invoke("save_note", { note: updated });
+          return updated;
+        });
+        return next;
+      });
+    },
+    []
+  );
+
+  const updateCustomField = useCallback(
+    (id: string, key: string, value: string) => {
+      setNotes((prev) => {
+        const next = prev.map((n) => {
+          if (n.id !== id) return n;
+          const updated = {
+            ...n,
+            customFields: (n.customFields ?? []).map((f) =>
+              f.key === key ? { ...f, value } : f
+            ),
+            updatedAt: Date.now(),
+          };
+          invoke("save_note", { note: updated });
+          return updated;
+        });
+        return next;
+      });
+    },
+    []
+  );
+
+  const removeCustomField = useCallback(
+    (id: string, key: string) => {
+      setNotes((prev) => {
+        const next = prev.map((n) => {
+          if (n.id !== id) return n;
+          const updated = {
+            ...n,
+            customFields: (n.customFields ?? []).filter((f) => f.key !== key),
+            updatedAt: Date.now(),
+          };
+          invoke("save_note", { note: updated });
+          return updated;
+        });
+        return next;
+      });
+    },
+    []
+  );
 
   const runAiEdit = useCallback(async (prompt: string) => {
     const target = notes.find((n) => n.id === activeId);
@@ -270,6 +447,15 @@ function App() {
     }
   }, [notes, activeId]);
 
+  // Cancel pending AI-property jobs on unmount
+  useEffect(() => {
+    const timers = propsTimers.current;
+    return () => {
+      timers.forEach((t) => clearTimeout(t));
+      timers.clear();
+    };
+  }, []);
+
   // ⌘K opens the AI prompt bar (when editing a note)
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
@@ -286,6 +472,46 @@ function App() {
     return () => window.removeEventListener("keydown", handler);
   }, [view, activeId, aiPromptOpen]);
 
+  const toggleNoteFavorite = useCallback((id: string) => {
+    setNotes((prev) => {
+      const next = prev.map((n) => {
+        if (n.id !== id) return n;
+        const updated: Note = { ...n, updatedAt: Date.now() };
+        if (n.favorite) {
+          delete updated.favorite;
+        } else {
+          updated.favorite = true;
+        }
+        invoke("save_note", { note: updated });
+        return updated;
+      });
+      return next;
+    });
+  }, []);
+
+  const duplicateNote = useCallback(
+    (id: string) => {
+      const src = notes.find((n) => n.id === id);
+      if (!src) return;
+      const now = Date.now();
+      const copy: Note = {
+        id: crypto.randomUUID(),
+        title: src.title ? `${src.title} (copy)` : "",
+        body: src.body,
+        updatedAt: now,
+        createdAt: now,
+        folderId: src.folderId,
+        description: src.description,
+        tags: src.tags,
+        customFields: src.customFields,
+      };
+      invoke("save_note", { note: copy });
+      setNotes((prev) => [copy, ...prev]);
+      setActiveId(copy.id);
+    },
+    [notes]
+  );
+
   const deleteNote = useCallback((id: string) => {
     invoke("delete_note", { id });
     setNotes((prev) => {
@@ -297,35 +523,37 @@ function App() {
     });
   }, [activeId]);
 
-  const visibleNotes = activeFolderId
-    ? notes.filter((n) => n.folderId === activeFolderId)
-    : notes;
-  const activeFolder = folders.find((f) => f.id === activeFolderId) ?? null;
-  const noteSort = activeFolder?.noteSort ?? "newest";
-  const sorted = [...visibleNotes].sort((a, b) => {
-    switch (noteSort) {
-      case "az":
-        return (a.title || "Untitled").toLowerCase().localeCompare(
-          (b.title || "Untitled").toLowerCase()
-        );
-      case "za":
-        return (b.title || "Untitled").toLowerCase().localeCompare(
-          (a.title || "Untitled").toLowerCase()
-        );
-      case "oldest":
-        return a.updatedAt - b.updatedAt;
-      case "newest":
-      default:
-        return b.updatedAt - a.updatedAt;
-    }
-  });
-  const pinnedFolders = folders.filter((f) => f.favorite);
-
   const openNoteFromHome = useCallback((id: string) => {
     setActiveId(id);
     setActiveFolderId(null);
     setView("notes");
   }, []);
+
+  const startSidebarResize = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    sidebarResizeRef.current = { startX: e.clientX, startW: sidebarWidth };
+    document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
+    const onMove = (ev: PointerEvent) => {
+      const start = sidebarResizeRef.current;
+      if (!start) return;
+      const next = Math.min(480, Math.max(180, start.startW + (ev.clientX - start.startX)));
+      setSidebarWidth(next);
+    };
+    const onUp = () => {
+      sidebarResizeRef.current = null;
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+    };
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+  }, [sidebarWidth]);
+
+  useEffect(() => {
+    window.localStorage.setItem("clove:sidebarWidth", String(sidebarWidth));
+  }, [sidebarWidth]);
 
   const openFolderFromHome = useCallback(
     (id: string) => {
@@ -340,7 +568,7 @@ function App() {
   if (!loaded) {
     return (
       <div className="app">
-        <aside className="sidebar">
+        <aside className="sidebar" style={{ width: sidebarWidth, minWidth: sidebarWidth }}>
           <div className="sidebar-header">
             <h1 className="logo">Clove</h1>
           </div>
@@ -356,12 +584,15 @@ function App() {
 
   return (
     <div className="app">
-      <aside className="sidebar">
+      <aside className="sidebar" style={{ width: sidebarWidth, minWidth: sidebarWidth }}>
+        <div
+          className="sidebar-resize-handle"
+          onPointerDown={startSidebarResize}
+          title="Drag to resize sidebar"
+          aria-label="Resize sidebar"
+        />
         <div className="sidebar-header">
           <h1 className="logo">Clove</h1>
-          {view === "notes" && (
-            <button className="new-note-btn" onClick={createNote} title="New note">+</button>
-          )}
         </div>
 
         <div className="view-switcher">
@@ -386,81 +617,28 @@ function App() {
           >
             Tasks
           </button>
+          <button
+            className={`view-tab ${view === "graph" ? "active" : ""}`}
+            onClick={() => {
+              setView("graph");
+              setActiveId(null);
+            }}
+          >
+            Graph
+          </button>
         </div>
 
-        {pinnedFolders.length > 0 && (
-          <div className="pinned-folders">
-            <div className="pinned-folders-label">Pinned</div>
-            {pinnedFolders.map((f) => (
-              <button
-                key={f.id}
-                className={`pinned-folder-item ${
-                  activeFolderId === f.id && view === "notes" ? "active" : ""
-                }`}
-                onClick={() => openFolderFromHome(f.id)}
-                title={f.name}
-              >
-                <span
-                  className="pinned-folder-dot"
-                  data-color={f.color ?? "default"}
-                />
-                <span className="pinned-folder-name">{f.name}</span>
-              </button>
-            ))}
-          </div>
-        )}
-
         {view === "notes" && (
-          <>
-            {activeFolder && (
-              <div className="folder-filter-bar">
-                <span className="folder-filter-name">📁 {activeFolder.name}</span>
-                <button
-                  className="folder-filter-clear"
-                  onClick={() => setActiveFolderId(null)}
-                  title="Show all notes"
-                >
-                  &times;
-                </button>
-              </div>
-            )}
-            <div className="search-wrapper">
-              <input
-                type="text"
-                className="search"
-                placeholder="Search notes..."
-              />
-            </div>
-
-            <nav className="notes-list">
-              {sorted.map((note) => (
-                <div
-                  key={note.id}
-                  className={`note-item ${note.id === activeId ? "active" : ""}`}
-                  onClick={() => setActiveId(note.id)}
-                >
-                  <span className="note-item-title">
-                    {note.title || "Untitled"}
-                  </span>
-                  <div className="note-item-bottom">
-                    <span className="note-item-meta">
-                      {formatTime(note.updatedAt)}
-                    </span>
-                    <button
-                      className="note-delete-btn"
-                      title="Delete note"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        deleteNote(note.id);
-                      }}
-                    >
-                      &times;
-                    </button>
-                  </div>
-                </div>
-              ))}
-            </nav>
-          </>
+          <SidebarTree
+            notes={notes}
+            folders={folders}
+            activeId={activeId}
+            onOpenNote={(id) => setActiveId(id)}
+            onDeleteNote={deleteNote}
+            onCreateNote={(folderId) => createNote(folderId)}
+            onReorderFolders={reorderFolders}
+            onReorderPinnedNotes={reorderPinnedNotes}
+          />
         )}
       </aside>
 
@@ -484,9 +662,14 @@ function App() {
           onDeleteFolder={deleteFolder}
           onRenameFolder={renameFolder}
           onSetFolderColor={(id, color) => setFolderColor(id, color)}
-          onToggleFolderFavorite={toggleFolderFavorite}
           onSetFolderNoteSort={(id, sort) => setFolderNoteSort(id, sort)}
           onDuplicateFolder={duplicateFolder}
+          onToggleNoteFavorite={toggleNoteFavorite}
+          onMoveNoteToFolder={(id, fid) => assignNoteFolder(id, fid)}
+          onDuplicateNote={duplicateNote}
+          onDeleteNote={deleteNote}
+          onReorderFolders={reorderFolders}
+          onReorderPinnedNotes={reorderPinnedNotes}
         />
       )}
 
@@ -532,6 +715,13 @@ function App() {
                 <span className="ai-cmdk-kbd">⌘K</span>
               </button>
               <button
+                className={`ai-toggle ${propertiesOpen ? "active" : ""}`}
+                onClick={() => setPropertiesOpen((o) => !o)}
+                title="Toggle properties panel"
+              >
+                Properties
+              </button>
+              <button
                 className={`ai-toggle ${chatOpen ? "active" : ""}`}
                 onClick={() => setChatOpen((o) => !o)}
                 title="Toggle AI chat panel"
@@ -550,6 +740,27 @@ function App() {
             />
           </main>
 
+          {propertiesOpen && activeNote && (
+            <PropertiesPanel
+              createdAt={activeNote.createdAt}
+              updatedAt={activeNote.updatedAt}
+              description={activeNote.description}
+              tags={activeNote.tags}
+              customFields={activeNote.customFields}
+              folderName={
+                activeNote.folderId
+                  ? folders.find((f) => f.id === activeNote.folderId)?.name ?? null
+                  : null
+              }
+              generating={propsGenerating.has(activeNote.id)}
+              onAddField={(f) => addCustomField(activeNote.id, f)}
+              onRemoveField={(k) => removeCustomField(activeNote.id, k)}
+              onUpdateField={(k, v) => updateCustomField(activeNote.id, k, v)}
+              onRemoveTag={(t) => removeTag(activeNote.id, t)}
+              onRegenerate={() => runPropertiesGeneration(activeNote.id)}
+            />
+          )}
+
           {chatOpen && activeNote && (
             <ChatPanel
               noteTitle={activeNote.title}
@@ -560,6 +771,14 @@ function App() {
       )}
 
       {view === "tasks" && <TasksView />}
+
+      {view === "graph" && (
+        <GraphView
+          notes={notes}
+          folders={folders}
+          onOpenNote={openNoteFromHome}
+        />
+      )}
 
       {aiPromptOpen && activeNote && (
         <AiPromptBar

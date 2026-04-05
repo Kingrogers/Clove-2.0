@@ -98,8 +98,26 @@ fn embed_one(text: &str) -> Result<Vec<f32>, String> {
         .ok_or_else(|| "no embedding returned".to_string())
 }
 
-fn note_text(title: &str, body: &str) -> String {
-    format!("{}\n\n{}", title, body)
+fn note_text(title: &str, description: &str, tags: &str, body: &str) -> String {
+    // Weight signals so tags/description have pull in cosine similarity without
+    // drowning out body content. Repeating high-signal fields is a cheap
+    // well-known trick with sentence-transformers.
+    let mut parts = Vec::with_capacity(6);
+    if !title.trim().is_empty() {
+        parts.push(title.to_string());
+        parts.push(title.to_string());
+    }
+    if !description.trim().is_empty() {
+        parts.push(description.to_string());
+    }
+    if !tags.trim().is_empty() {
+        parts.push(format!("tags: {}", tags));
+        parts.push(format!("topics: {}", tags));
+    }
+    if !body.trim().is_empty() {
+        parts.push(body.to_string());
+    }
+    parts.join("\n\n")
 }
 
 fn cosine(a: &[f32], b: &[f32]) -> f32 {
@@ -123,13 +141,17 @@ fn cosine(a: &[f32], b: &[f32]) -> f32 {
 }
 
 /// Update (or insert) the embedding for a note. Persists the index.
+/// Incorporates AI-generated description and tags so semantic search matches
+/// notes via their summarized meaning and keywords, not just raw body text.
 pub fn upsert_note(
     note_id: &str,
     title: &str,
+    description: &str,
+    tags: &str,
     body: &str,
     updated_at: u64,
 ) -> Result<(), String> {
-    let text = note_text(title, body);
+    let text = note_text(title, description, tags, body);
     let vector = embed_one(&text)?;
     let index = get_index();
     {
@@ -153,18 +175,21 @@ pub fn remove_note(note_id: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// A note ready for embedding: (id, title, description, tags, body, updated_at).
+pub type NoteForIndex = (String, String, String, String, String, u64);
+
 /// Incrementally rebuild: re-embed notes whose updated_at is newer than the cached entry
 /// (or that aren't cached at all), and drop cached entries for notes that no longer exist.
-pub fn sync_index(notes: &[(String, String, String, u64)]) -> Result<usize, String> {
+pub fn sync_index(notes: &[NoteForIndex]) -> Result<usize, String> {
     let current_ids: std::collections::HashSet<String> =
-        notes.iter().map(|(id, _, _, _)| id.clone()).collect();
+        notes.iter().map(|(id, _, _, _, _, _)| id.clone()).collect();
 
-    let stale: Vec<(String, String, String, u64)> = {
+    let stale: Vec<NoteForIndex> = {
         let index = get_index();
         let guard = index.lock().map_err(|e| e.to_string())?;
         notes
             .iter()
-            .filter(|(id, _, _, updated_at)| match guard.get(id) {
+            .filter(|(id, _, _, _, _, updated_at)| match guard.get(id) {
                 Some(cached) => cached.updated_at < *updated_at,
                 None => true,
             })
@@ -173,8 +198,8 @@ pub fn sync_index(notes: &[(String, String, String, u64)]) -> Result<usize, Stri
     };
 
     let mut updated = 0usize;
-    for (id, title, body, updated_at) in &stale {
-        if upsert_note(id, title, body, *updated_at).is_ok() {
+    for (id, title, description, tags, body, updated_at) in &stale {
+        if upsert_note(id, title, description, tags, body, *updated_at).is_ok() {
             updated += 1;
         }
     }

@@ -6,14 +6,32 @@ use std::process::Command;
 mod embeddings;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct CustomField {
+    pub key: String,
+    pub value: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Note {
     pub id: String,
     pub title: String,
     pub body: String,
     #[serde(rename = "updatedAt")]
     pub updated_at: u64,
+    #[serde(rename = "createdAt", default, skip_serializing_if = "Option::is_none")]
+    pub created_at: Option<u64>,
     #[serde(rename = "folderId", default, skip_serializing_if = "Option::is_none")]
     pub folder_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub favorite: Option<bool>,
+    #[serde(rename = "pinnedOrder", default, skip_serializing_if = "Option::is_none")]
+    pub pinned_order: Option<i32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tags: Option<Vec<String>>,
+    #[serde(rename = "customFields", default, skip_serializing_if = "Option::is_none")]
+    pub custom_fields: Option<Vec<CustomField>>,
 }
 
 fn notes_dir() -> PathBuf {
@@ -73,8 +91,14 @@ fn save_note(note: Note) -> Result<(), String> {
     let title = note.title.clone();
     let body = note.body.clone();
     let updated_at = note.updated_at;
+    let description = note.description.clone().unwrap_or_default();
+    let tags_joined = note
+        .tags
+        .as_ref()
+        .map(|t| t.join(", "))
+        .unwrap_or_default();
     std::thread::spawn(move || {
-        let _ = embeddings::upsert_note(&id, &title, &body, updated_at);
+        let _ = embeddings::upsert_note(&id, &title, &description, &tags_joined, &body, updated_at);
     });
 
     Ok(())
@@ -112,15 +136,22 @@ async fn semantic_search(query: String, limit: Option<usize>) -> Result<Vec<Sear
         .collect())
 }
 
+fn note_to_index_row(n: Note) -> embeddings::NoteForIndex {
+    let description = n.description.unwrap_or_default();
+    let tags = n
+        .tags
+        .map(|t| t.join(", "))
+        .unwrap_or_default();
+    (n.id, n.title, description, tags, n.body, n.updated_at)
+}
+
 #[tauri::command]
 async fn rebuild_search_index() -> Result<usize, String> {
     // Collect notes on the current thread (fast filesystem work) then hand off to a
     // blocking task for the CPU-heavy embedding work.
     let notes = list_notes()?;
-    let payload: Vec<(String, String, String, u64)> = notes
-        .into_iter()
-        .map(|n| (n.id, n.title, n.body, n.updated_at))
-        .collect();
+    let payload: Vec<embeddings::NoteForIndex> =
+        notes.into_iter().map(note_to_index_row).collect();
     tokio::task::spawn_blocking(move || embeddings::sync_index(&payload))
         .await
         .map_err(|e| e.to_string())?
@@ -143,6 +174,8 @@ pub struct Folder {
     pub color: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub favorite: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub order: Option<i32>,
     #[serde(rename = "noteSort", default, skip_serializing_if = "Option::is_none")]
     pub note_sort: Option<String>,
 }
@@ -627,16 +660,212 @@ async fn ai_edit_note(
     Ok(clean_ai_response(text))
 }
 
+// ── Auto-properties (AI-generated description + tags) ──
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct NoteProperties {
+    pub description: String,
+    pub tags: Vec<String>,
+}
+
+fn extract_json_object(s: &str) -> Option<String> {
+    // Strip code fences if present, then find first {...} block.
+    let cleaned = clean_ai_response(s.to_string());
+    let start = cleaned.find('{')?;
+    let bytes = cleaned.as_bytes();
+    let mut depth = 0i32;
+    let mut in_str = false;
+    let mut escape = false;
+    for i in start..bytes.len() {
+        let c = bytes[i] as char;
+        if escape {
+            escape = false;
+            continue;
+        }
+        if c == '\\' && in_str {
+            escape = true;
+            continue;
+        }
+        if c == '"' {
+            in_str = !in_str;
+            continue;
+        }
+        if in_str {
+            continue;
+        }
+        if c == '{' {
+            depth += 1;
+        } else if c == '}' {
+            depth -= 1;
+            if depth == 0 {
+                return Some(cleaned[start..=i].to_string());
+            }
+        }
+    }
+    None
+}
+
+fn sanitize_tags(raw: Vec<String>) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    for t in raw {
+        let normalized: String = t
+            .trim()
+            .to_lowercase()
+            .chars()
+            .map(|c| match c {
+                ' ' | '_' => '-',
+                c if c.is_alphanumeric() || c == '-' => c,
+                _ => '-',
+            })
+            .collect::<String>()
+            .trim_matches('-')
+            .to_string();
+        let collapsed = normalized
+            .split('-')
+            .filter(|s| !s.is_empty())
+            .collect::<Vec<_>>()
+            .join("-");
+        if collapsed.is_empty() || collapsed.len() > 30 {
+            continue;
+        }
+        if seen.insert(collapsed.clone()) {
+            out.push(collapsed);
+        }
+        if out.len() >= 6 {
+            break;
+        }
+    }
+    out
+}
+
+fn parse_properties(json_text: &str) -> Result<NoteProperties, String> {
+    let obj = extract_json_object(json_text)
+        .ok_or_else(|| "no JSON object in response".to_string())?;
+    let parsed: serde_json::Value =
+        serde_json::from_str(&obj).map_err(|e| format!("parse error: {}", e))?;
+    let description = parsed
+        .get("description")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .trim()
+        .chars()
+        .take(160)
+        .collect::<String>();
+    let tags_raw = parsed
+        .get("tags")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    Ok(NoteProperties {
+        description,
+        tags: sanitize_tags(tags_raw),
+    })
+}
+
+const PROPERTIES_PROMPT_INSTRUCTION: &str =
+    "Analyze the note below and return ONLY a JSON object (no markdown, no code fences, no \
+     prose) with exactly two fields:\n\
+     - \"description\": one concise sentence (max 140 chars) summarizing what this note is about\n\
+     - \"tags\": array of 3-5 short lowercase kebab-case tags (single words or hyphenated) that \
+     categorize the note's topics, themes, entities, or type\n\n\
+     Return only the JSON object.";
+
+#[tauri::command]
+async fn generate_note_properties(
+    title: String,
+    body: String,
+) -> Result<NoteProperties, String> {
+    // Skip empty notes
+    if title.trim().is_empty() && body.trim().is_empty() {
+        return Ok(NoteProperties {
+            description: String::new(),
+            tags: vec![],
+        });
+    }
+
+    let note_block = format!(
+        "--- Note ---\nTitle: {}\n\n{}\n--- End Note ---",
+        title.trim(),
+        body.trim()
+    );
+    let full_prompt = format!("{}\n\n{}", PROPERTIES_PROMPT_INSTRUCTION, note_block);
+
+    // Try local Claude Code first
+    if let Some(bin) = find_claude_binary() {
+        if let Ok(output) = tokio::process::Command::new(&bin)
+            .arg("-p")
+            .arg(&full_prompt)
+            .env("PATH", full_path())
+            .output()
+            .await
+        {
+            if output.status.success() {
+                let raw = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                if !raw.is_empty() {
+                    if let Ok(props) = parse_properties(&raw) {
+                        return Ok(props);
+                    }
+                }
+            }
+        }
+    }
+
+    // Fall back to Anthropic API
+    let api_key = get_api_key()?;
+    let request = AnthropicRequest {
+        model: "claude-sonnet-4-20250514".to_string(),
+        max_tokens: 256,
+        system: PROPERTIES_PROMPT_INSTRUCTION.to_string(),
+        messages: vec![ChatMessage {
+            role: "user".to_string(),
+            content: note_block,
+        }],
+    };
+
+    let client = reqwest::Client::new();
+    let response = client
+        .post("https://api.anthropic.com/v1/messages")
+        .header("x-api-key", &api_key)
+        .header("anthropic-version", "2023-06-01")
+        .header("content-type", "application/json")
+        .json(&request)
+        .send()
+        .await
+        .map_err(|e| format!("Request failed: {}", e))?;
+
+    if !response.status().is_success() {
+        let status = response.status();
+        let body = response.text().await.unwrap_or_default();
+        return Err(format!("API error ({}): {}", status, body));
+    }
+
+    let result: AnthropicResponse = response
+        .json()
+        .await
+        .map_err(|e| format!("Failed to parse response: {}", e))?;
+
+    let text = result
+        .content
+        .first()
+        .map(|c| c.text.clone())
+        .ok_or_else(|| "Empty response".to_string())?;
+
+    parse_properties(&text)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // Kick off embedding model warm-up and index sync in the background so the UI
     // is never blocked and search is ready by the time the user needs it.
     std::thread::spawn(|| {
         if let Ok(notes) = list_notes() {
-            let payload: Vec<(String, String, String, u64)> = notes
-                .into_iter()
-                .map(|n| (n.id, n.title, n.body, n.updated_at))
-                .collect();
+            let payload: Vec<embeddings::NoteForIndex> =
+                notes.into_iter().map(note_to_index_row).collect();
             let _ = embeddings::sync_index(&payload);
         }
     });
@@ -663,6 +892,7 @@ pub fn run() {
             semantic_search,
             rebuild_search_index,
             search_index_size,
+            generate_note_properties,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
